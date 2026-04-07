@@ -106,41 +106,63 @@ All agent behaviour lives here — greeting, system prompt, clinic hours, bookin
 
 ---
 
-## Setup
+## 🛠 Setup & Installation
 
-### 1. Install dependencies
+Follow these steps to set up the AI Voice Receptionist on your local machine.
+
+### 1. Prerequisite: Python Version
+Ensure you have **Python 3.10 to 3.12** installed. 
+> [!IMPORTANT]
+> This project uses `audioop`, which was deprecated in Python 3.13. Please use Python 3.12 or lower.
+
+### 2. Clone and Create Virtual Environment
+```bash
+# Create a virtual environment
+python -m venv venv
+
+# Activate it (Windows)
+.\venv\Scripts\activate
+
+# Activate it (Linux/Mac)
+source venv/bin/activate
+```
+
+### 3. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure .env
+### 4. Configure Environment Variables
+Copy the `.env.example` file to `.env` and fill in your API keys:
+```bash
+cp .env.example .env
 ```
-GEMINI_API_KEY=your_key
-GOOGLE_CALENDAR_ID=your_gmail@gmail.com
-GMAIL_USER=your_gmail@gmail.com
-GMAIL_APP_PASSWORD=your_app_password
-DOCTOR_EMAIL=your_gmail@gmail.com
-```
+Fill in the following in `.env`:
+*   `GEMINI_API_KEY`: Get from [Google AI Studio](https://aistudio.google.com/)
+*   `GOOGLE_CALENDAR_ID`: Your Gmail address (or a specific calendar ID)
+*   `GMAIL_USER`: Your Gmail address for sending notifications
+*   `GMAIL_APP_PASSWORD`: Generate an [App Password](https://myaccount.google.com/apppasswords) for your Gmail account.
+*   `DOCTOR_EMAIL`: The email address where call summaries should be sent.
 
-### 3. Add Google credentials
-Place your service account JSON as `google-credentials.json` in the project root.
+### 5. Google Cloud Service Account
+1.  Go to [Google Cloud Console](https://console.cloud.google.com/).
+2.  Enable **Google Sheets API** and **Google Calendar API**.
+3.  Create a **Service Account** and download the JSON key file.
+4.  Rename the file to `google-credentials.json` and place it in the project root.
+5.  **Share** your Google Sheet and Google Calendar with the service account's email (found in the JSON) as an **Editor**.
 
-Share your Google Sheet and Google Calendar with the service account email.
-
-### 4. Run
+### 6. Run the Server
 ```bash
 python vobiz_main.py
 ```
 
-### 5. Expose with ngrok
+### 7. Expose to the Internet (ngrok)
+Vobiz needs a public URL to send Webhooks to your local server.
 ```bash
 ngrok http 5050
 ```
-
-Set your Vobiz webhook Answer URL to:
-```
-https://your-ngrok-url.ngrok-free.app/answer
-```
+Copy the `https://...` URL from ngrok and update your **Vobiz Webhook Answer URL** to:
+`https://your-ngrok-url.ngrok-free.app/answer`
 
 ---
 
