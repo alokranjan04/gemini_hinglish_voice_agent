@@ -1,8 +1,13 @@
 import os
 import json
 import smtplib
+import traceback
+import audioop
+import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -23,433 +28,357 @@ AVAILABLE_SLOTS = {
     "Saturday":  ["9:00 AM", "10:00 AM", "11:00 AM", "12:00 PM"],
 }
 
+def get_google_creds():
+    """Load Google service account credentials. Tries env var first, then credentials file."""
+    # Try loading from google-credentials.json file first (most reliable)
+    creds_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google-credentials.json")
+    if os.path.exists(creds_file):
+        try:
+            with open(creds_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"WARNING: Could not load google-credentials.json: {e}")
 
-def check_available_slots(preferred_day: str):
-    """Check available appointment slots for a given day."""
-    day = preferred_day.strip().capitalize()
-    if day == "Sunday":
-        return {"error": "Clinic is closed on Sundays. Monday se Saturday tak available hain."}
-    slots = AVAILABLE_SLOTS.get(day)
-    if not slots:
-        return {"error": f"'{preferred_day}' ek valid weekday nahi hai. Please Monday to Saturday mein se choose karein."}
+    # Fall back to GOOGLE_CREDENTIALS env var
+    creds_json = os.getenv("GOOGLE_CREDENTIALS", "").strip()
+    if not creds_json:
+        return None
+
+    try:
+        if (creds_json.startswith("'") and creds_json.endswith("'")) or (creds_json.startswith('"') and creds_json.endswith('"')):
+            creds_json = creds_json[1:-1]
+
+        data = json.loads(creds_json)
+
+        pk = data.get("private_key", "")
+        if pk:
+            pk = pk.replace("\\n", "\n")
+            pk = pk.replace("\\\\n", "\n")
+            data["private_key"] = pk.strip()
+
+        return data
+    except Exception as e:
+        print(f"WARNING: Credential Parse Error: {e}")
+        return None
+
+def generate_ics(appt):
+    """Generate a standard iCalendar (.ics) string."""
+    start_dt = get_appointment_datetime(appt["preferred_day"], appt["preferred_time"])
+    end_dt = start_dt + timedelta(minutes=30)
     
-    # Filter out already booked slots for that day
-    booked = [
-        a["preferred_time"]
-        for a in APPOINTMENTS_DB["appointments"].values()
-        if a["preferred_day"].capitalize() == day and a["status"] == "confirmed"
+    dtstamp = datetime.now().strftime("%Y%m%dT%H%M%SZ")
+    dtstart = start_dt.strftime("%Y%m%dT%H%M%S")
+    dtend = end_dt.strftime("%Y%m%dT%H%M%S")
+    
+    ics = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Neha Child Care//Clinic Assistant//EN",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:{appt['id']}@nehachildcare.com",
+        f"DTSTAMP:{dtstamp}",
+        f"DTSTART;TZID=Asia/Kolkata:{dtstart}",
+        f"DTEND;TZID=Asia/Kolkata:{dtend}",
+        f"SUMMARY:Appointment: {appt['patient_name']}",
+        f"DESCRIPTION:Parent: {appt['parent_name']}\\nReason: {appt['reason']}\\nContact: {appt['contact_number']}",
+        "LOCATION:Neha Child Care Clinic",
+        "STATUS:CONFIRMED",
+        "SEQUENCE:0",
+        "BEGIN:VALARM",
+        "TRIGGER:-PT30M",
+        "ACTION:DISPLAY",
+        "DESCRIPTION:Reminder",
+        "END:VALARM",
+        "END:VEVENT",
+        "END:VCALENDAR"
     ]
-    available = [s for s in slots if s not in booked]
-    
-    if not available:
-        return {"message": f"{day} ko koi slot available nahi hai. Kisi aur din try karein.", "available_slots": []}
-    
-    slots_str = ", ".join(available)
-    return {
-        "day": day,
-        "available_slots": available,
-        "message": f"{day} ko ye slots available hain: {slots_str}. Aap inmein se koi select kar sakte hain."
-    }
+    return "\n".join(ics)
 
-
-def book_appointment(patient_name: str, patient_age: str, parent_name: str,
-                     contact_number: str, preferred_day: str, preferred_time: str,
-                     reason: str):
-    """Book an appointment at Neha Child Care clinic."""
-    day = preferred_day.strip().capitalize()
-
-    if day == "Sunday":
-        return {"error": "Sunday ko clinic band hai. Koi aur din select karein."}
-
-    if day not in AVAILABLE_SLOTS:
-        return {"error": f"'{preferred_day}' valid nahi hai. Monday to Saturday mein se choose karein."}
-
-    if preferred_time not in AVAILABLE_SLOTS.get(day, []):
-        return {"error": f"{preferred_time} is din ke liye valid slot nahi hai.",
-                "available_slots": AVAILABLE_SLOTS.get(day, [])}
-
-    # Check if slot is already taken
-    for appt in APPOINTMENTS_DB["appointments"].values():
-        if (appt["preferred_day"].capitalize() == day and
-                appt["preferred_time"] == preferred_time and
-                appt["status"] == "confirmed"):
-            return {"error": f"{day} {preferred_time} ka slot already booked hai. Koi aur time choose karein.",
-                    "available_slots": [s for s in AVAILABLE_SLOTS[day] if s != preferred_time]}
-
-    appt_id = APPOINTMENTS_DB["next_id"]
-    APPOINTMENTS_DB["next_id"] += 1
-
-    appointment = {
-        "id": appt_id,
-        "patient_name": patient_name,
-        "patient_age": patient_age,
-        "parent_name": parent_name,
-        "contact_number": contact_number,
-        "preferred_day": day,
-        "preferred_time": preferred_time,
-        "reason": reason,
-        "status": "confirmed",
-        "clinic": "Neha Child Care"
-    }
-    APPOINTMENTS_DB["appointments"][appt_id] = appointment
-
-    print(f"DEBUG: Appointment object created with ID {appt_id}. Starting integrations...")
-
-    # --- NEW: Google Calendar and Email Integration ---
-    calendar_status = "Not attempted"
-    email_status = "Not attempted"
-
-    try:
-        # 1. Create Calendar Event
-        print(f"DEBUG: Attempting to create Google Calendar event for {patient_name}...")
-        event_result = create_google_calendar_event(appointment)
-        if "id" in event_result:
-            calendar_status = "Success"
-            print(f"SUCCESS: Calendar event created: {event_result.get('htmlLink')}")
-        else:
-            calendar_status = f"Failed: {event_result.get('error')}"
-            print(f"FAILURE: Calendar event failed: {calendar_status}")
-    except Exception as e:
-        calendar_status = f"Error: {str(e)}"
-        print(f"CRITICAL ERROR in Calendar Integration: {e}")
-
-    try:
-        # 2. Send Email to Doctor
-        print(f"DEBUG: Sending confirmation email to doctor...")
-        email_result = send_confirmation_email(appointment)
-        if email_result.get("success"):
-            email_status = "Success"
-            print("SUCCESS: Confirmation email sent to doctor.")
-        else:
-            email_status = f"Failed: {email_result.get('error')}"
-            print(f"FAILURE: Email failed: {email_status}")
-    except Exception as e:
-        email_status = f"Error: {str(e)}"
-        print(f"CRITICAL ERROR in Email Integration: {e}")
-
-    try:
-        # 3. Update Google Sheets Instantly (Final Success Pillar)
-        print(f"DEBUG: Updating Google Sheets log for {patient_name}...")
-        sheet_result = update_booking_sheet(
-            name=patient_name,
-            patient_name=patient_name,
-            problems=reason,
-            parents_name=parent_name,
-            is_booked=True,
-            booking_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-        if sheet_result.get("success"):
-            print("SUCCESS: Google Sheets log updated.")
-        else:
-            print(f"FAILURE: Google Sheets failed: {sheet_result.get('error')}")
-    except Exception as e:
-        print(f"CRITICAL ERROR in Google Sheets Integration: {e}")
-
-    return {
-        "appointment_id": appt_id,
-        "message": f"Appointment successfully book ho gayi! Appointment ID hai {appt_id}.",
-        "patient_name": patient_name,
-        "parent_name": parent_name,
-        "day": day,
-        "time": preferred_time,
-        "clinic": "Neha Child Care",
-        "calendar_status": calendar_status,
-        "email_status": email_status,
-        "reminder": "Please apna appointment ID yaad rakhein. 15 minute pehle clinic aa jayein."
-    }
-
-
-def get_appointment_datetime(day_name: str, time_str: str):
-    """Helper to convert 'Monday' and '11:00 AM' to a datetime object for the NEXT occurrence."""
+def get_appointment_datetime(day_name, time_str):
+    """Convert 'Monday' and '10:00 AM' to a datetime object for the upcoming week."""
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    try:
-        target_day = days.index(day_name.capitalize())
-    except:
-        # Fallback if AI passes something else
-        target_day = datetime.now().weekday()
+    target_day = days.index(day_name.capitalize())
     
-    now = datetime.now()
-    current_day = now.weekday()
+    current_dt = datetime.now()
+    current_day = current_dt.weekday()
     
     days_ahead = target_day - current_day
+    if days_ahead <= 0: days_ahead += 7
     
-    # If the day is today, check if the time has passed
-    if days_ahead < 0:
-        days_ahead += 7
-    elif days_ahead == 0:
-        # Check if the requested time is still in the future for today
-        try:
-            time_obj = datetime.strptime(time_str, "%I:%M %p")
-            if now.hour > time_obj.hour or (now.hour == time_obj.hour and now.minute >= time_obj.minute):
-                days_ahead = 7 # Push to next week
-            else:
-                days_ahead = 0 # It's for today!
-        except:
-            days_ahead = 7
-
-    target_date = now + timedelta(days=days_ahead)
+    target_date = current_dt + timedelta(days=days_ahead)
+    time_dt = datetime.strptime(time_str, "%I:%M %p")
     
-    # Parse time (e.g., "11:00 AM")
+    return target_date.replace(hour=time_dt.hour, minute=time_dt.minute, second=0, microsecond=0)
+
+def update_booking_sheet(patient_name, problems, parents_name, contact_number, booking_time):
+    """Append a new row to the Google Sheets booking log with detailed error reporting."""
     try:
-        time_obj = datetime.strptime(time_str, "%I:%M %p")
-    except:
-        time_obj = datetime.now().replace(hour=11, minute=0)
-
-    final_dt = target_date.replace(hour=time_obj.hour, minute=time_obj.minute, second=0, microsecond=0)
-    return final_dt
-
-
-def create_google_calendar_event(appt):
-    """Create an event in Google Calendar using a Service Account JSON file."""
-    try:
-        # Path to Service Account JSON
-        creds_file = 'google-credentials.json'
-        if not os.path.exists(creds_file):
-            return {"error": "google-credentials.json file missing"}
-        
-        # Load and clean JSON manually for maximum Windows reliability
-        with open(creds_file, 'r') as f:
-            creds_data = json.load(f)
-        
-        # Scrub the private key
-        key = creds_data.get("private_key", "")
-        if "\\n" in key:
-            key = key.replace("\\n", "\n")
-        creds_data["private_key"] = key.strip()
-
-        scopes = ['https://www.googleapis.com/auth/calendar']
-        creds = service_account.Credentials.from_service_account_info(creds_data, scopes=scopes)
-        service = build('calendar', 'v3', credentials=creds)
-
-        start_dt = get_appointment_datetime(appt["preferred_day"], appt["preferred_time"])
-        end_dt = start_dt + timedelta(minutes=30)
-
-        event = {
-            'summary': f'Appointment: {appt["patient_name"]} ({appt["clinic"]})',
-            'location': 'Neha Child Care Clinic',
-            'description': f'Patient: {appt["patient_name"]}\nAge: {appt["patient_age"]}\nParent: {appt["parent_name"]}\nContact: {appt["contact_number"]}\nReason: {appt["reason"]}',
-            'start': {
-                'dateTime': start_dt.isoformat(),
-                'timeZone': 'Asia/Kolkata',
-            },
-            'end': {
-                'dateTime': end_dt.isoformat(),
-                'timeZone': 'Asia/Kolkata',
-            },
-            'reminders': {
-                'useDefault': False,
-                'overrides': [
-                    {'method': 'email', 'minutes': 24 * 60},
-                    {'method': 'popup', 'minutes': 30},
-                ],
-            },
-        }
-
-        calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
-        event = service.events().insert(calendarId=calendar_id, body=event).execute()
-        print(f"Event created: {event.get('htmlLink')}")
-        return event
-
-    except Exception as e:
-        print(f"Error creating calendar event: {e}")
-        return {"error": str(e)}
-
-
-def send_confirmation_email(appt):
-    """Send HTML confirmation email to the doctor."""
-    try:
-        gmail_user = os.getenv("GMAIL_USER")
-        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
-        doctor_email = os.getenv("DOCTOR_EMAIL", gmail_user)
-
-        if not gmail_user or not gmail_password:
-            return {"error": "Email credentials missing in .env"}
-
-        msg = MIMEMultipart()
-        msg['From'] = f"Clinic Assistant <{gmail_user}>"
-        msg['To'] = doctor_email
-        msg['Subject'] = f"New Appointment: {appt['patient_name']} for {appt['preferred_day']}"
-
-        html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                <h2 style="color: #007bff; border-bottom: 2px solid #007bff; padding-bottom: 10px;">New Appointment Request</h2>
-                <p>Hello Doctor, you have a new appointment scheduled:</p>
-                
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Patient Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt['patient_name']}</td></tr>
-                    <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Age:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt['patient_age']}</td></tr>
-                    <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Parent Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt['parent_name']}</td></tr>
-                    <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Contact:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt['contact_number']}</td></tr>
-                    <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Day & Time:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt['preferred_day']} at {appt['preferred_time']}</td></tr>
-                    <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Reason:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt['reason']}</td></tr>
-                </table>
-                
-                <p style="margin-top: 20px; font-size: 12px; color: #777;">This is an automated notification from your Voice AI Assistant.</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg.attach(MIMEText(html, 'html'))
-
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(gmail_user, gmail_password)
-        server.send_message(msg)
-        server.quit()
-
-        return {"success": True}
-
-    except Exception as e:
-        print(f"Error sending email: {e}")
-        return {"error": str(e)}
-
-
-def send_call_summary_email(summary: str, transcript: str):
-    """Send post-call analytic report to the doctor."""
-    try:
-        gmail_user = os.getenv("GMAIL_USER")
-        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
-        doctor_email = os.getenv("DOCTOR_EMAIL", gmail_user)
-
-        if not gmail_user or not gmail_password:
-            return {"error": "Email credentials missing in .env"}
-
-        msg = MIMEMultipart()
-        msg['From'] = f"Clinic Voice AI <{gmail_user}>"
-        msg['To'] = doctor_email
-        msg['Subject'] = f"Call Summary: Neha Child Care Agent - {datetime.now().strftime('%d %b %I:%M %p')}"
-
-        # Format transcript with line breaks
-        formatted_transcript = transcript.replace("\n", "<br>")
-
-        html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 650px; margin: 0 auto; padding: 25px; border: 1px solid #eee; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Post-Call Analytics Report</h2>
-                
-                <section style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="color: #3498db; margin-top: 0;">AI Summary</h3>
-                    <p style="font-size: 15px; color: #444;">{summary}</p>
-                </section>
-
-                <section>
-                    <h3 style="color: #3498db;">Full Transcript</h3>
-                    <div style="background: #ffffff; border-left: 4px solid #3498db; padding: 10px 15px; font-size: 14px; color: #666; max-height: 400px; overflow-y: auto;">
-                        {formatted_transcript}
-                    </div>
-                </section>
-                
-                <p style="margin-top: 30px; font-size: 11px; color: #999; text-align: center;">
-                    Generated by Gemini 3.1 Multimodal Live API • Neha Child Care Clinic
-                </p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg.attach(MIMEText(html, 'html'))
-
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(gmail_user, gmail_password)
-        server.send_message(msg)
-        server.quit()
-
-        print(f"Post-call summary sent to {doctor_email}")
-        return {"success": True}
-
-    except Exception as e:
-        print(f"Error sending summary email: {e}")
-        return {"error": str(e)}
-
-
-def update_booking_sheet(name, patient_name, problems, parents_name, is_booked, booking_time):
-    """Append a new row to the Google Sheets booking log."""
-    try:
-        creds_file = 'google-credentials.json'
-        if not os.path.exists(creds_file):
-            return {"error": "google-credentials.json file missing"}
-        
-        with open(creds_file, 'r') as f:
-            creds_data = json.load(f)
-        
-        key = creds_data.get("private_key", "").replace("\\n", "\n").strip()
-        creds_data["private_key"] = key
+        creds_data = get_google_creds()
+        if not creds_data: return {"error": "Credentials missing"}
         
         scopes = ['https://www.googleapis.com/auth/spreadsheets']
         creds = service_account.Credentials.from_service_account_info(creds_data, scopes=scopes)
         service = build('sheets', 'v4', credentials=creds)
         
         spreadsheet_id = "1T5FLtmFUu0-VWpa8KT_c3BP8BcDKjZuco3tHDeDRbyo"
-        range_name = "Sheet1!A2" # Appends to the next available row
+        range_name = "Sheet1!A2" 
         
         values = [[
-            name or "Unknown",
-            patient_name or "N/A",
-            problems or "N/A",
-            parents_name or "N/A",
-            "Yes" if is_booked else "No",
-            booking_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            patient_name,
+            problems,
+            parents_name,
+            contact_number,
+            "Yes",
+            booking_time
         ]]
         
-        body = {'values': values}
         result = service.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
             range=range_name,
             valueInputOption="RAW",
-            body=body
+            insertDataOption="INSERT_ROWS",
+            body={'values': values}
         ).execute()
         
-        print(f"Google Sheets updated: {result.get('updates').get('updatedCells')} cells updated.")
-        return {"success": True}
-
+        return {"success": True, "updated": result.get('updates', {}).get('updatedCells')}
     except Exception as e:
-        print(f"Error updating Google Sheets: {e}")
+        print(f"SHEETS ERROR: {e}")
         return {"error": str(e)}
 
-
-def check_appointment(appointment_id: int):
-    """Check details of an existing appointment."""
-    appt = APPOINTMENTS_DB["appointments"].get(int(appointment_id))
-    if appt:
-        return {
-            "appointment_id": appt["id"],
-            "patient_name": appt["patient_name"],
-            "patient_age": appt["patient_age"],
-            "parent_name": appt["parent_name"],
-            "contact_number": appt["contact_number"],
-            "day": appt["preferred_day"],
-            "time": appt["preferred_time"],
-            "reason": appt["reason"],
-            "status": appt["status"],
-            "clinic": "Neha Child Care"
+def create_google_calendar_event(appt):
+    """Invite the doctor via Service Account to ensure calendar visibility."""
+    try:
+        creds_data = get_google_creds()
+        if not creds_data: return {"error": "Credentials missing"}
+        
+        scopes = ['https://www.googleapis.com/auth/calendar']
+        creds = service_account.Credentials.from_service_account_info(creds_data, scopes=scopes)
+        service = build('calendar', 'v3', credentials=creds)
+        
+        start_dt = get_appointment_datetime(appt["preferred_day"], appt["preferred_time"])
+        end_dt = start_dt + timedelta(minutes=30)
+        
+        event = {
+            'summary': f'Appointment: {appt["patient_name"]}',
+            'description': f'Parent: {appt["parent_name"]}\nContact: {appt["contact_number"]}\nReason: {appt["reason"]}',
+            'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
+            'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         }
-    return {"error": f"Appointment ID {appointment_id} nahi mila. Please sahi ID check karein."}
 
+        calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+        event_result = service.events().insert(calendarId=calendar_id, body=event).execute()
+        return event_result
+    except Exception as e:
+        print(f"CALENDAR ERROR: {e}")
+        return {"error": str(e)}
 
-def cancel_appointment(appointment_id: int):
-    """Cancel an existing appointment."""
-    appt = APPOINTMENTS_DB["appointments"].get(int(appointment_id))
-    if not appt:
-        return {"error": f"Appointment ID {appointment_id} nahi mila."}
-    if appt["status"] == "cancelled":
-        return {"message": f"Appointment {appointment_id} pehle se hi cancel hai."}
-
-    APPOINTMENTS_DB["appointments"][int(appointment_id)]["status"] = "cancelled"
+def book_appointment(patient_name, patient_age, parent_name, contact_number, preferred_day, preferred_time, reason):
+    """Master booking function for Neha Child Care with honest reporting."""
+    print(f"\n[DIGITAL_LOG]: Processing booking for {patient_name}...")
+    
+    appt_id = APPOINTMENTS_DB["next_id"]
+    APPOINTMENTS_DB["next_id"] += 1
+    
+    appt = {
+        "id": appt_id, "patient_name": patient_name, "patient_age": patient_age,
+        "parent_name": parent_name, "contact_number": contact_number,
+        "preferred_day": preferred_day, "preferred_time": preferred_time,
+        "reason": reason, "clinic": "Neha Child Care"
+    }
+    
+    # 🏃 1. Update Sheets
+    sheet_res = update_booking_sheet(patient_name, reason, parent_name, contact_number, datetime.now().strftime("%Y-%m-%d %H:%M"))
+    
+    # 🏃 2. Update Calendar
+    cal_res = create_google_calendar_event(appt)
+    
+    # 🏃 3. Send Email with ICS Attachment
+    email_res = send_confirmation_email_with_ics(appt)
+    
+    # Check for underlying failures
+    if "error" in sheet_res or "error" in cal_res:
+        return {
+            "success": False,
+            "message": f"BOOKING_PARTIAL_FAILURE: Shets/Calendar update handle nahi paya. Check terminal.",
+            "sheets_status": sheet_res.get("error", "OK"),
+            "calendar_status": cal_res.get("error", "OK")
+        }
+    
     return {
-        "message": f"Appointment {appointment_id} successfully cancel ho gayi.",
-        "patient_name": appt["patient_name"],
-        "day": appt["preferred_day"],
-        "time": appt["preferred_time"]
+        "success": True,
+        "message": f"Appointment successfully booked and synced! ID: {appt_id}.",
+        "details": appt
     }
 
+def send_confirmation_email_with_ics(appt):
+    """Send appointment email with an attached .ics file."""
+    try:
+        gmail_user = os.getenv("GMAIL_USER")
+        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+        doctor_email = os.getenv("DOCTOR_EMAIL")
+        
+        msg = MIMEMultipart()
+        msg['From'] = f"Clinic Assistant <{gmail_user}>"
+        msg['To'] = doctor_email
+        msg['Subject'] = f"Appointment Booked: {appt['patient_name']}"
+        
+        body = f"Appointment confirmed for {appt['patient_name']} on {appt['preferred_day']} at {appt['preferred_time']}."
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Add ICS Attachment
+        ics_content = generate_ics(appt)
+        part = MIMEBase('text', 'calendar', method='REQUEST', name='invite.ics')
+        part.set_payload(ics_content)
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', 'attachment; filename="invite.ics"')
+        msg.attach(part)
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(gmail_user, gmail_password)
+        server.send_message(msg)
+        server.quit()
+        return {"success": True}
+    except Exception as e:
+        print(f"EMAIL ERROR: {e}")
+        return {"error": str(e)}
 
-# Function mapping
+def send_call_summary_email(summary, transcript):
+    """Standard call summary email."""
+    try:
+        gmail_user = os.getenv("GMAIL_USER")
+        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+        doctor_email = os.getenv("DOCTOR_EMAIL")
+        
+        msg = MIMEMultipart()
+        msg['From'] = f"Priya Assistant <{gmail_user}>"
+        msg['To'] = doctor_email
+        msg['Subject'] = f"Call Summary: Neha Child Care"
+        
+        body = f"Summary: {summary}\n\nTranscript:\n{transcript}"
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(gmail_user, gmail_password)
+        server.send_message(msg)
+        server.quit()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+def check_available_slots(preferred_day):
+    day = preferred_day.strip().capitalize()
+    slots = AVAILABLE_SLOTS.get(day, [])
+    return {"day": day, "available_slots": slots}
+
+def _get_sheets_service():
+    creds_data = get_google_creds()
+    if not creds_data: return None, None
+    creds = service_account.Credentials.from_service_account_info(
+        creds_data, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    return build('sheets', 'v4', credentials=creds), "1T5FLtmFUu0-VWpa8KT_c3BP8BcDKjZuco3tHDeDRbyo"
+
+def _get_calendar_service():
+    creds_data = get_google_creds()
+    if not creds_data: return None
+    creds = service_account.Credentials.from_service_account_info(
+        creds_data, scopes=['https://www.googleapis.com/auth/calendar'])
+    return build('calendar', 'v3', credentials=creds)
+
+def _find_sheet_rows(patient_name, contact_number):
+    """Return list of (row_index, row_data) matching patient_name or contact_number."""
+    service, spreadsheet_id = _get_sheets_service()
+    if not service: return []
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Sheet1!A:F").execute()
+    rows = result.get('values', [])
+    matches = []
+    for i, row in enumerate(rows[1:], start=2):  # skip header
+        name_match = len(row) > 0 and patient_name.lower() in row[0].lower()
+        phone_match = len(row) > 3 and contact_number and row[3] == str(contact_number)
+        if name_match or phone_match:
+            matches.append((i, row))
+    return matches
+
+def _delete_calendar_events(patient_name):
+    """Delete all upcoming calendar events matching patient name."""
+    service = _get_calendar_service()
+    if not service: return 0
+    calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+    now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    events = service.events().list(
+        calendarId=calendar_id, q=f"Appointment: {patient_name}",
+        timeMin=now, maxResults=10, singleEvents=True).execute()
+    deleted = 0
+    for event in events.get('items', []):
+        if f"Appointment: {patient_name}" in event.get('summary', ''):
+            service.events().delete(calendarId=calendar_id, eventId=event['id']).execute()
+            deleted += 1
+    return deleted
+
+def cancel_appointment(patient_name, contact_number):
+    """Cancel an existing appointment by patient name."""
+    print(f"\n[DIGITAL_LOG]: Cancelling appointment for {patient_name}...")
+    try:
+        service, spreadsheet_id = _get_sheets_service()
+        rows = _find_sheet_rows(patient_name, contact_number)
+        if not rows:
+            return {"success": False, "message": f"Koi appointment nahi mili '{patient_name}' ke liye. Kya naam sahi hai?"}
+
+        # Mark as Cancelled in sheet
+        for row_idx, _ in rows:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"Sheet1!E{row_idx}",
+                valueInputOption="RAW",
+                body={'values': [["Cancelled"]]}
+            ).execute()
+
+        # Delete from calendar
+        deleted = _delete_calendar_events(patient_name)
+        print(f"[DIGITAL_LOG]: Cancelled {len(rows)} sheet rows, {deleted} calendar events.")
+        return {"success": True, "message": f"{patient_name} ki appointment cancel ho gayi hai."}
+    except Exception as e:
+        print(f"CANCEL ERROR: {e}")
+        return {"error": str(e)}
+
+def reschedule_appointment(patient_name, contact_number, new_day, new_time):
+    """Reschedule an existing appointment to a new day and time."""
+    print(f"\n[DIGITAL_LOG]: Rescheduling appointment for {patient_name} to {new_day} {new_time}...")
+    try:
+        # Get old appointment details from sheet
+        rows = _find_sheet_rows(patient_name, contact_number)
+        if not rows:
+            return {"success": False, "message": f"Koi appointment nahi mili '{patient_name}' ke liye."}
+
+        _, old_row = rows[0]
+        reason = old_row[1] if len(old_row) > 1 else "Reschedule"
+
+        # Cancel old
+        cancel_appointment(patient_name, contact_number)
+
+        # Book new
+        result = book_appointment(
+            patient_name=patient_name,
+            patient_age="",
+            parent_name=patient_name,
+            contact_number=contact_number,
+            preferred_day=new_day,
+            preferred_time=new_time,
+            reason=reason
+        )
+        if result.get("success"):
+            return {"success": True, "message": f"{patient_name} ki appointment reschedule ho gayi! {new_day} ko {new_time} baje."}
+        return result
+    except Exception as e:
+        print(f"RESCHEDULE ERROR: {e}")
+        return {"error": str(e)}
+
 FUNCTION_MAP = {
     "check_available_slots": check_available_slots,
     "book_appointment": book_appointment,
-    "check_appointment": check_appointment,
     "cancel_appointment": cancel_appointment,
+    "reschedule_appointment": reschedule_appointment
 }

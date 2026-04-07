@@ -264,7 +264,20 @@ async def gemini_handler(twilio_ws):
 
         # Use the core audio loops; Priya greets naturally upon first activity
         try:
-            await asyncio.gather(from_twilio(), from_gemini())
+            # Create tasks instead of a simple gather
+            twilio_task = asyncio.create_task(from_twilio())
+            gemini_task = asyncio.create_task(from_gemini())
+            
+            # Wait for either to finish (usually Twilio when user hangs up)
+            done, pending = await asyncio.wait(
+                [twilio_task, gemini_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel the remaining task
+            for task in pending:
+                task.cancel()
+                
         finally:
             # 1. Final WebSocket Close
             print("\nGemini: Call connection closed. Starting post-call analytics...")

@@ -36,6 +36,19 @@ Once the WebSocket closes, a secondary asynchronous block triggers:
 
 ---
 
-## 5. Multi-Cloud Ready Pattern
+## 5. Vobiz Native Audio Pipeline (16kHz)
 
-The architecture follows a **Provider Interface Pattern**. By separating the `gemini_handler` from the `main_server`, the system is ready for the future **Azure OpenAI Realtime** integration.
+The system now supports **Vobiz.ai** for localized Indian deployments.
+- **Superior Fidelity**: Unlike Twilio's 8kHz Mu-law, Vobiz supports **16kHz Linear PCM** natively.
+- **Latency Reduction**: By matching Gemini's native 16kHz input requirements, we eliminate the Mu-law-to-PCM translation and resampling steps, reducing total round-trip time (RTT).
+
+## 6. Observability Framework (Call Telemetry)
+
+The agent now includes a professional observability layer to track production KPIs:
+- **TTFT (Time to First Token)**: Measured from the moment the user stops speaking to the first byte of AI audio.
+- **Session Duration**: Precise tracking of billable conversation time.
+- **Multi-Modal Costing**: Real-time estimation of Gemini API costs based on model turn density.
+
+## 7. Multi-Cloud Ready Pattern
+
+The architecture follows a **Provider Interface Pattern**. By separating the core logic from the telephony provider (`twilio_handler` vs `vobiz_handler`), the system is now vendor-agnostic and ready for future integrations.

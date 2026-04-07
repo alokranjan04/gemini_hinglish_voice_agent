@@ -22,24 +22,19 @@ A native Voice AI Assistant (Priya) that functions as a 24/7 front-desk agent. U
 
 ## 4. Feature Requirements
 
-### MVP (v1.0) - Currently Implemented
+### MVP (v1.1) - Optimized for Indian Markets
 | Feature | Description | Business Value |
 | :--- | :--- | :--- |
-| **Native S2S** | Near-zero latency conversation. | Patient Trust & Retention. |
+| **Vobiz Native S2S** | 16kHz High-Fidelity audio via Indian VoIP. | Lower Latency & Localization. |
 | **GCal Sync** | Direct booking on Google Calendar. | Operational Efficiency. |
 | **GSheet Logs** | Instant row logging of call data. | Auditability & Lead Tracking. |
-| **Email Summary** | Post-call clinical briefing for doctors. | Actionable Data. |
-| **Localization** | Native Hinglish support. | Cultural Alignment & Accuracy. |
-
-### Future (v2.0) - Roadmap
-- **Multi-Cloud Fallback**: Switching between Google & Azure to ensure 100% uptime.
-- **Sentiment Analysis**: Detecting high-urgency/emergency calls vs. routine ones.
-- **Cost Dashboard**: Real-time tracking of token usage and cost-per-appointment.
+| **Telemetry** | Real-time Dashboard (TTFT, Cost, Duration). | ROI Transparency. |
+| **Email Summary** | Shielded post-call briefings for doctors. | 100% Data Reliability. |
 
 ## 5. Success Metrics (KPIs)
-- **Latencv (TTFB)**: Response time < 500ms.
-- **Booking Accuracy**: 95%+ correctness on name/number capture.
-- **Task Completion Rate**: Percentage of calls resulting in a successful log.
+- **Response Latency (TTFT)**: Targeted < 400ms via Vobiz 16kHz pipeline.
+- **Data Reliability**: 100% through Shielded Analytics (Atomic consistency).
+- **Unit Economics**: Average cost-per-call tracked via Telemetry dashboard.
 
 ---
 
