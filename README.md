@@ -1,98 +1,57 @@
-# 🚀 Priya: The Native Speech-to-Speech AI Receptionist 🏥☎️
+# Omni-Voice: Native Speech-to-Speech Architecture for Specialized Healthcare
 
-A cutting-edge, low-latency AI voice receptionist built using **Google Gemini 3.1 Multimodal Live**. Designed for high-traffic clinics and SMEs, this agent provides human-speed interaction, native Hinglish support, and deep enterprise integration.
+## 1. Project Introduction
+Omni-Voice is a high-performance, low-latency artificial intelligence receptionist designed specifically for small-to-medium medical practitioners. By leveraging native multimodal processing, the system addresses the critical bottleneck of patient intake and appointment management, ensuring 24/7 availability and operational efficiency.
 
----
+## 2. Product Value Proposition (The "Why")
+In the healthcare sector, administrative friction often leads to revenue leakage and diminished patient trust. Traditional IVR (Interactive Voice Response) systems suffer from high cognitive load and excessive menu-depth. Omni-Voice replaces this with a conversational interface that understands context, local dialects (Hinglish), and intent, directly integrating with the clinic's administrative stack to provide:
+- **Instant Response**: Eliminating wait times for booking and inquiries.
+- **Data Integrity**: Reducing manual transcription errors in patient records.
+- **Operational Scalability**: Allowing staff to focus on high-acuity clinical tasks rather than routine scheduling.
 
-## 🌟 Why this project? (The "Why")
+## 3. Technology Stack Deep-Dive (The "What")
 
-In healthcare, "Front-Desk Fatigue" isn't just an HR issue—it’s a patient experience crisis. 📉
-Small-to-medium medical clinics face massive operational bottlenecks: missed calls, scheduling errors, and data entry delays.
+### 3.1 Google Gemini 3.1 Multimodal Live
+The core reasoning engine uses the `gemini-3.1-flash-live-preview` model. Unlike standard LLMs that require separate Speech-to-Text (STT) and Text-to-Speech (TTS) modules, Gemini 3.1 Live processes audio natively via a Bidirectional (Bidi) stream. 
+- **Effectiveness**: This architecture reduces Time to First Byte (TTFB) significantly by eliminating the latency inherent in sequential transcription and synthesis.
+- **Multimodality**: The model maintains a stateful understanding of audio nuances, allowing for a more human-like "patience" and turn-taking logic.
 
-**Priya** was built to solve this by:
-*   **Zero Latency**: Eliminating the "robotic delay" of traditional voice bots.
-*   **Native Hinglish**: Localizing the experience to build trust with parents.
-*   **End-to-End Automation**: Connecting the phone line directly to the clinic's core workflow.
+### 3.2 Twilio Media Streams
+Connectivity to the Public Switched Telephone Network (PSTN) is managed via Twilio. The system utilizes Twilio Media Streams to fork and stream raw audio data in real-time over WebSockets.
+- **Protocol**: Twilio provides G.711 Mu-law audio at an 8,000Hz sampling rate.
+- **Real-time Control**: Twilio allows the system to receive and inject audio dynamically, enabling the AI to interrupt or be interrupted naturally.
 
----
+### 3.3 Python AsyncIO and WebSockets
+The middleware is a custom-built asynchronous Python bridge. Using `asyncio` and the `websockets` library, the server manages two concurrent, full-duplex streams:
+- **Twilio-to-Gemini**: Uplink for user audio frames.
+- **Gemini-to-Twilio**: Downlink for agent audio responses.
 
-## 🎙️ What is built? (The "What")
+## 4. Architectural Implementation (The "How")
 
-This is a **Native Speech-to-Speech (S2S)** intelligence layer. Unlike traditional bots that follow a slow `Audio -> Text -> LLM -> Text -> Audio` loop, Priya "hears" and "speaks" audio directly using the Gemini 3.1 Multimodal Live protocol.
+### 4.1 The Audio Translation Bridge
+Telephony audio (8kHz Mu-law) is fundamentally incompatible with the required input for multimodal AI (24kHz PCM). The system performs high-frequency signal processing:
+1. **Mu-law to Linear PCM**: Converting telephony compression to raw 16-bit integers.
+2. **Resampling**: Upsampling/Downsampling between 8kHz and 24kHz using `audioop` to maintain fidelity across mismatched audio standards.
 
-### ✨ Core Features:
--   **📅 Live Booking**: Instant slot checking and booking via **Google Calendar**.
--   **📊 Automated Logging**: Real-time interaction logging into **Google Sheets**.
--   **📧 Clinical Briefing**: Automated post-call summary emails sent to doctors via **Gmail**.
--   **🗣️ Humanized Pacing**: Programmed to pause, listen, and use natural conversational fillers (Hinglish).
+### 4.2 The Turn-Taking and Message Loop (Bidi Protocol)
+The system implements the Google Bidi-Wire protocol. Each message is a JSON object containing either `serverContent` (audio/text) or `toolCall`.
+- **inputTranscription**: The system is configured to receive top-level transcription events, providing a textual record for post-call analytical processing even while maintaining the performance of native audio.
+- **Sentiment and Persona**: A dynamic system instruction is injected at the start of every call, defining the agent's identity and conversational boundaries (e.g., patient pacing and confirmation requirements).
 
----
+### 4.3 The Tool Execution Layer (Function Calling)
+The AI has direct agency through Function Calling. When the model identifies an intent (e.g., "Book an appointment"), it pauses the audio loop and issues a JSON `toolCall`.
+- **Google Calendar API**: Real-time slot assessment and event injection.
+- **Google Sheets API**: ETL (Extract, Transform, Load) logging of كل call data for business intelligence.
+- **SMTP/Gmail API**: Post-session NLP summarization and clinical briefing dispatch.
 
-## 🏗️ How it works? (The "How")
-
-The system operates as a high-performance **WebSocket Bridge** between Twilio (Telephony) and Google Gemini (AI).
-
-### 📐 Architecture Diagram
-
+### 4.4 Flow Architecture Diagram
 ```mermaid
 graph TD
-    User((User/Caller)) -- Mu-law Audio --> Twilio[Twilio Media Streams]
-    Twilio -- WebSocket --> Bridge[Python Bridge Server]
-    Bridge -- PCM Audio / Bidi --> Gemini[Gemini 3.1 Multimodal Live]
-    Gemini -- Tool Call --> Bridge
-    Bridge -- Google API --> GCal[Google Calendar]
-    Bridge -- Google API --> GSheet[Google Sheets]
-    Bridge -- SMTP --> Email[Post-Call Summary]
-    Gemini -- Audio Response --> Bridge
-    Bridge -- Mu-law --> Twilio
-    Twilio -- Audio --> User
-```
-
-### 🔹 Technical Highlights
--   **Dual-Protocol Bridge**: Translates 8kHz telephony audio to 24kHz AI-native PCM in real-time.
--   **Asynchronous Processing**: Built with `asyncio` to handle multiple audio buffers concurrently.
--   **Dynamic Context**: Priya is injected with the real-time date and time at the start of every call to ensure accurate scheduling.
-
----
-
-## 🛠️ Tech Stack
--   **AI Engine**: Google Gemini 3.1 Flash Live (Multimodal)
--   **Telephony**: Twilio Voice (Media Streams)
--   **Integrations**: Google Calendar API, Google Sheets API, Gmail API
--   **Language**: Python 3.12+ (AsyncIO, WebSockets)
-
----
-
-## 🚀 Setup & Execution
-
-### 1. Configuration
-Create a `.env` file:
-```env
-GEMINI_API_KEY=your_key
-GMAIL_USER=your_email@gmail.com
-GMAIL_APP_PASSWORD=your_app_password
-DOCTOR_EMAIL=recipient@example.com
-GOOGLE_CALENDAR_ID=primary
-```
-Ensure `google-credentials.json` (Service Account) is in the root directory and has **Editor** access to your Spreadsheet and Calendar.
-
-### 2. Run
-```powershell
-pip install -r requirements.txt
-python gemini_main.py
-```
-
----
-
-## 📈 Future Roadmap: Enterprise Grade
-- [ ] **Multi-Cloud Fallback**: Switching between Google & Azure AI for 99.9% uptime.
-- [ ] **Deep Observability**: Real-time tracking of:
-    - Voice Quality & Tone (Latency/Sentiment).
-    - Unit Economics (Cost-per-call, Token consumption).
-    - Session Success (Completion rates vs. duration).
-
----
-
-**Built with ❤️ for Healthcare Innovation.**
-```
-,Description:
+    A[PSTN/User Phone] <--> B[Twilio Voice Engine]
+    B <--> C[Twilio Media Stream / 8kHz Mu-law]
+    C <--> D[Python Bridge / Mu-law-to-PCM Translation]
+    D <--> E[Gemini 3.1 Live API / 24kHz PCM]
+    E -- JSON Tool Call --> F[Tool Execution Engine]
+    F --> G[Google Calendar API]
+    F --> H[Google Sheets API]
+    F --> I[SMTP Analytics Dispatch]
