@@ -1,0 +1,44 @@
+{
+    "type": "Settings",
+    "audio": {
+        "input": {
+            "encoding": "mulaw",
+            "sample_rate": 8000
+        },
+        "output": {
+            "encoding": "mulaw",
+            "sample_rate": 8000,
+            "container": "none"
+        }
+    },
+    "agent": {
+        "listen": {
+            "provider": {
+                "type": "deepgram",
+                "model": "nova-2",
+                "language": "hi"
+            }
+        },
+        "think": {
+            "provider": {
+                "type": "open_ai",
+                "model": "gpt-4o"
+            },
+            "endpoint": {
+                "url": "https://api.openai.com/v1/chat/completions",
+                "headers": {
+                    "Authorization": "Bearer OPENAI_KEY_PLACEHOLDER"
+                }
+            },
+            "instructions": "You are Priya, a warm and helpful receptionist at Neha Child Care clinic in India. Speak in Hinglish (a mix of Hindi and English). Assist the caller in booking a child's appointment."
+        },
+        "speak": {
+            "provider": {
+                "type": "elevenlabs",
+                "model": "eleven_multilingual_v2",
+                "voice_id": "cgSgWJ9ioSiaG0937a0G",
+                "api_key": "ELEVEN_LABS_KEY_PLACEHOLDER"
+            }
+        }
+    }
+}

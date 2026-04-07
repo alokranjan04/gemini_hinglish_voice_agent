@@ -1,0 +1,14 @@
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+python-dotenv
+websockets
+deepgram-sdk
+openai
+elevenlabs
+livekit-agents
+livekit-plugins-deepgram
+livekit-plugins-openai
+livekit-plugins-cartesia
+livekit-plugins-silero
+requests
