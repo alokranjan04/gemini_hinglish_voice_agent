@@ -29,7 +29,7 @@ except Exception as e:
 SARVAM_API_KEY   = os.getenv("SARVAM_API_KEY",   "").strip()
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY",  "").strip()
 GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY",    "").strip()
-PORT             = 5050
+PORT             = int(os.getenv("PORT", "5050"))   # Cloud Run injects PORT
 
 SARVAM_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions"
 SARVAM_TTS_URL  = "https://api.sarvam.ai/text-to-speech"
