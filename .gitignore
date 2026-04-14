@@ -31,7 +31,7 @@ tmp/
 recordings/
 benchmarks/
 scratch/
-metrics/
+metrics/call_log.jsonl
 .claude/
 
 # ── Sensitive utility scripts ────────────────────────────────────────────
