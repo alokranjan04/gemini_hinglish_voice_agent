@@ -16,7 +16,7 @@ venv/
 recordings/
 benchmarks/
 scratch/
-metrics/*.jsonl
+metrics/call_log.jsonl
 *.log
 
 # ── Dev / test files ──────────────────────────────────────────────────────────
