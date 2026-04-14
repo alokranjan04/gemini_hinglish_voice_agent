@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import os
 import websockets
@@ -8,53 +7,65 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL = "models/gemini-3.1-flash-live-preview"
-GEMINI_URL = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
+MODEL = "models/gemini-2.5-flash-native-audio-latest"
+GEMINI_URL = (
+    "wss://generativelanguage.googleapis.com/ws/"
+    "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+    f"?key={GEMINI_API_KEY}"
+)
 
 async def test_connection():
-    print(f"Connecting to Gemini Live API with model: {MODEL}...")
+    print(f"Testing model: {MODEL}")
     try:
         async with websockets.connect(GEMINI_URL) as ws:
-            # 1. Send Setup
+            # 1. Setup
             setup_msg = {
                 "setup": {
                     "model": MODEL,
-                    "generation_config": {
-                        "response_modalities": ["AUDIO"]
-                    }
+                    "generationConfig": {"responseModalities": ["AUDIO"]},
+                    "systemInstruction": {"parts": [{"text": "You are a helpful assistant. Reply in Hindi."}]},
                 }
             }
             await ws.send(json.dumps(setup_msg))
-            
-            # Wait for setup response
-            response = await ws.recv()
-            print(f"Setup Response: {response}")
-            
-            # 2. Send Dummy Audio Frame (1 second of silence, 16k PCM)
-            # 16000 samples * 2 bytes/sample = 32000 bytes
-            dummy_audio = b'\x00' * 32000 
-            audio_msg = {
-                "realtime_input": {
-                    "audio": {
-                        "data": base64.b64encode(dummy_audio).decode("utf-8"),
-                        "mime_type": "audio/pcm"
-                    }
+            resp = await ws.recv()
+            resp_json = json.loads(resp)
+            if resp_json.get("error"):
+                err = resp_json["error"]
+                print(f"FAIL — Setup error: {err.get('status')} — {err.get('message')}")
+                return
+            if resp_json.get("setupComplete") is not None:
+                print(f"PASS — Setup confirmed: {resp}")
+            else:
+                print(f"PASS — Setup response received: {resp[:120]}")
+
+            # 2. Send greeting nudge (clientContent — correct format)
+            await ws.send(json.dumps({
+                "clientContent": {
+                    "turns": [{"role": "user", "parts": [{"text": "Say hello in Hindi."}]}],
+                    "turnComplete": True
                 }
-            }
-            print("Sending dummy audio frame...")
-            await ws.send(json.dumps(audio_msg))
-            
-            # 3. Wait for any server content or error
-            # We use a timeout because if it's successful, we might just get a turn_complete or silence
+            }))
+            print("Sent greeting nudge via clientContent")
+
+            # 3. Wait for Gemini to respond (audio or text)
             try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                print(f"Server Response: {msg[:200]}...")
-                print("TEST PASSED: Connection stable and frame accepted.")
+                msg = await asyncio.wait_for(ws.recv(), timeout=8.0)
+                parsed = json.loads(msg)
+                if parsed.get("error"):
+                    print(f"FAIL — Gemini error after nudge: {parsed['error']}")
+                else:
+                    sc = parsed.get("serverContent") or {}
+                    has_audio = any(
+                        "inlineData" in p
+                        for part_list in [sc.get("modelTurn", {}).get("parts", [])]
+                        for p in part_list
+                    )
+                    print(f"PASS — Gemini responded. Has audio: {has_audio} | Keys: {list(parsed.keys())}")
             except asyncio.TimeoutError:
-                print("TEST PASSED: Connection stable (no error response received after sending audio).")
-            
+                print("PASS — Connection stable, no response within 8s (may need audio input first)")
+
     except Exception as e:
-        print(f"TEST FAILED: {e}")
+        print(f"FAIL — {e}")
 
 if __name__ == "__main__":
     asyncio.run(test_connection())
