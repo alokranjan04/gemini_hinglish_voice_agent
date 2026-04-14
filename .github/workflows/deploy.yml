@@ -3,7 +3,7 @@ name: Deploy Priya to Cloud Run
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 env:
   REGION:   asia-south1
@@ -55,30 +55,36 @@ jobs:
           docker push ${{ env.IMAGE }}:${{ github.sha }}
           docker push ${{ env.IMAGE }}:latest
 
-      # ── 7. Deploy to Cloud Run ────────────────────────────────────────────
-      # Secrets are injected as step env vars first, then assembled into a
-      # clean comma-separated string — avoids all shell quoting/newline issues.
-      # GOOGLE_CREDENTIALS comes from GCP Secret Manager (JSON-safe, no commas).
-      - name: Deploy to Cloud Run
+      # ── 7. Write env vars file ────────────────────────────────────────────
+      # Use a YAML file instead of --set-env-vars to safely handle values
+      # that contain spaces (e.g. Gmail App Passwords: "xxxx xxxx xxxx xxxx")
+      - name: Write env vars file
         env:
-          SARVAM_API_KEY:       ${{ secrets.SARVAM_API_KEY }}
-          DEEPGRAM_API_KEY:     ${{ secrets.DEEPGRAM_API_KEY }}
-          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_CALENDAR_ID:   ${{ secrets.GOOGLE_CALENDAR_ID }}
+          SARVAM_API_KEY:        ${{ secrets.SARVAM_API_KEY }}
+          DEEPGRAM_API_KEY:      ${{ secrets.DEEPGRAM_API_KEY }}
+          GEMINI_API_KEY:        ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_CALENDAR_ID:    ${{ secrets.GOOGLE_CALENDAR_ID }}
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
-          GMAIL_USER:           ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD:   ${{ secrets.GMAIL_APP_PASSWORD }}
-          DOCTOR_EMAIL:         ${{ secrets.DOCTOR_EMAIL }}
+          GMAIL_USER:            ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+          DOCTOR_EMAIL:          ${{ secrets.DOCTOR_EMAIL }}
         run: |
-          ENV_VARS="SARVAM_API_KEY=${SARVAM_API_KEY}"
-          ENV_VARS="${ENV_VARS},DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}"
-          ENV_VARS="${ENV_VARS},GEMINI_API_KEY=${GEMINI_API_KEY}"
-          ENV_VARS="${ENV_VARS},GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID}"
-          ENV_VARS="${ENV_VARS},GOOGLE_SPREADSHEET_ID=${GOOGLE_SPREADSHEET_ID}"
-          ENV_VARS="${ENV_VARS},GMAIL_USER=${GMAIL_USER}"
-          ENV_VARS="${ENV_VARS},GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}"
-          ENV_VARS="${ENV_VARS},DOCTOR_EMAIL=${DOCTOR_EMAIL}"
+          python3 - << 'PYEOF'
+          import yaml, os
+          keys = [
+              'SARVAM_API_KEY', 'DEEPGRAM_API_KEY', 'GEMINI_API_KEY',
+              'GOOGLE_CALENDAR_ID', 'GOOGLE_SPREADSHEET_ID',
+              'GMAIL_USER', 'GMAIL_APP_PASSWORD', 'DOCTOR_EMAIL',
+          ]
+          env = {k: os.environ[k] for k in keys}
+          with open('/tmp/env-vars.yaml', 'w') as f:
+              yaml.dump(env, f, default_flow_style=False, allow_unicode=True)
+          print("env-vars.yaml written with keys:", list(env.keys()))
+          PYEOF
 
+      # ── 8. Deploy to Cloud Run ────────────────────────────────────────────
+      - name: Deploy to Cloud Run
+        run: |
           gcloud run deploy ${{ env.SERVICE }} \
             --image=${{ env.IMAGE }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
@@ -92,9 +98,9 @@ jobs:
             --timeout=3600 \
             --session-affinity \
             --set-secrets="GOOGLE_CREDENTIALS=google-credentials:latest" \
-            --set-env-vars="${ENV_VARS}"
+            --env-vars-file=/tmp/env-vars.yaml
 
-      # ── 8. Print deployed URL ─────────────────────────────────────────────
+      # ── 9. Print deployed URL ─────────────────────────────────────────────
       - name: Get service URL
         run: |
           URL=$(gcloud run services describe ${{ env.SERVICE }} \
