@@ -1,176 +1,444 @@
 # Priya — AI Voice Receptionist for Neha Child Care
 
-> A fully working AI receptionist for a children's clinic in India, built for almost ₹0.
+> A production Hindi voice agent that answers real clinic phone calls, books appointments, and manages a live Google Calendar — with two switchable AI pipelines and a built-in metrics dashboard.
 
-She answers calls, books appointments, updates Google Calendar & Sheets, sends confirmation emails, and speaks fluent Hinglish.
+Priya speaks natural conversational Hindi (Devanagari script), handles appointment booking / cancellation / rescheduling, checks real-time slot availability against Google Calendar, logs every booking to Google Sheets, sends .ics email invites, and emails a call transcript after every call — all over a live phone line.
 
 ---
 
 ## The Problem
 
-Small clinics in India miss 40–60% of incoming calls. Receptionists are expensive, burned out, and unavailable at night. Parents calling about sick children get voicemail.
+Small clinics in India miss 40–60% of incoming calls. Receptionists are expensive and unavailable at night. Parents calling about sick children get voicemail.
 
-This project fixes that with AI — without the ₹50,000/month SaaS price tag.
-
----
-
-## The Stack (nearly free)
-
-| Component | Technology | Cost |
-|---|---|---|
-| AI Engine | Google Gemini 3.1 Flash Live (`BidiGenerateContent`) | Free tier |
-| Telephony | Vobiz.ai (Indian market, 16kHz WebSocket) | Low cost |
-| Calendar | Google Calendar API | Free |
-| Booking Log | Google Sheets API | Free |
-| Email | Gmail SMTP | Free |
-| Backend | Python AsyncIO + WebSockets | Free |
-
-**Total infra cost: ~$0/month on free tiers**
+This project replaces that with AI — at a fraction of SaaS pricing, with full control over the voice, language, and booking logic.
 
 ---
 
-## Architecture
+## Architecture Overview
 
 ```
-Caller → Vobiz WebSocket → Python Bridge → Gemini Live BidiGenerateContent
-                                              ↓ (function calls)
-                                    Google Calendar + Sheets + Gmail
+Phone call (Vobiz)
+        │
+        ▼
+  POST /answer  ←─── Vobiz webhook (call arrives)
+        │
+        ▼
+  app_config.json ──► active_provider = "sarvam" | "google"
+        │
+   ┌────┴────┐
+   │         │
+   ▼         ▼
+Pipeline A  Pipeline B
+(Sarvam)   (Gemini)
 ```
 
-No STT. No TTS. No orchestration layer.
-
-Gemini receives raw PCM audio and returns raw PCM audio — one WebSocket, bidirectional. The `BidiGenerateContent` API eliminates the entire STT → LLM → TTS chain that makes most voice agents slow and expensive.
+A single `aiohttp` server on **port 5050** handles both pipelines. The active pipeline is selected per-call from `app_config.json` — switchable live via dashboard or API with no restart.
 
 ---
 
-## What Priya Can Do
+## Pipeline A — Sarvam (Primary / Production)
 
-- Answer in natural Hinglish ("Namaste! Neha Child Care mein aapka swagat hai…")
-- Book appointments — asks only 3 questions (child name, age, reason)
-- Cancel & reschedule existing appointments
-- Check real-time slot availability
-- Auto-log every call to Google Sheets
-- Add calendar events instantly
-- Email call summaries after every call
-- Handle emergencies ("Please call 112 immediately")
+```
+Vobiz WebSocket (mulaw 8 kHz)
+  │
+  ├──► Deepgram Nova-3  (STT WebSocket, Hindi, interim + final transcripts)
+  │         │
+  │    ┌────┴──────────────────────────────────────┐
+  │    │  Transcript processing                     │
+  │    │  • Confidence filter  (< 0.55 → dropped)  │
+  │    │  • Greeting intercept (hello/हेलो → skip LLM)│
+  │    │  • Barge-in detection (≥ 2-word interim)  │
+  │    └────┬──────────────────────────────────────┘
+  │         │  final transcript
+  │         ▼
+  │    Sarvam 30B LLM  (sarvam-30b, streaming, tool calling)
+  │         │
+  │    ┌────┴───────────────────────────────────────────┐
+  │    │  Tool execution (pharmacy_functions.py)         │
+  │    │  • check_available_slots → Google Calendar      │
+  │    │  • book_appointment   → Sheets + Calendar + Email│
+  │    │  • cancel_appointment → Sheets + Calendar        │
+  │    │  • reschedule_appointment → cancel + re-book    │
+  │    └────┬───────────────────────────────────────────┘
+  │         │  Hindi text response
+  │         ▼
+  │    Sarvam Bulbul v2 TTS  (bulbul:v2, hi-IN, 8 kHz mulaw)
+  │         │
+  └─────────┤
+            ▼
+     Vobiz WebSocket  (playAudio event → phone speaker)
+```
+
+| Component | Technology |
+|---|---|
+| STT | Deepgram **Nova-3** — WebSocket, `language=hi`, mulaw 8 kHz, interim results |
+| LLM | Sarvam **sarvam-30b** — OpenAI-compatible API, streaming, function calling |
+| TTS | Sarvam **Bulbul v2** — `bulbul:v2`, `hi-IN`, 8 kHz mulaw output |
+| Language | Hindi (Devanagari) — never transliteration |
+| Barge-in | Interim transcript ≥ 2 words cancels in-flight TTS task |
+| Keep-alive | 20 ms silence sent every 0.8 s to prevent Vobiz hangup |
 
 ---
 
-## Booking Flow
+## Pipeline B — Google Gemini Multimodal Live
 
 ```
-1. Child's name
-2. Child's age
-3. Reason for visit / problem
-→ Check available slots
-→ Book appointment (tool call)
-→ Confirm verbally + Google Calendar + Sheets + Email
+Vobiz WebSocket (mulaw 8 kHz)
+  │
+  ├──► upsample 8kHz → 16kHz ──► Gemini BidiGenerateContent WebSocket
+  │                                   │  (STT + LLM + TTS in one connection)
+  │                                   │  tool calls → pharmacy_functions.py
+  │                                   │  audio output (PCM 24 kHz)
+  │         downsample 24kHz → 8kHz ◄─┘
+  │         + audioop.mul amplify
+  └─────────────────────────────────►  Vobiz WebSocket (playAudio)
 ```
 
-- Phone number is captured automatically from the caller ID — never asked
-- Parent name is not collected — keeps the conversation short
+| Component | Technology |
+|---|---|
+| Model | Gemini **gemini-3.1-flash-live-preview** |
+| Voice | Aoede (built-in Gemini voice) |
+| Protocol | BidiGenerateContent WebSocket (`v1beta`) |
+| Audio in | mulaw 8 kHz → PCM 16 kHz (upsample via `audioop.ratecv`) |
+| Audio out | PCM 24 kHz → mulaw 8 kHz (downsample + 1.4× amplify) |
+| Advantage | Lowest latency — single WebSocket, no pipeline stages |
 
 ---
 
-## The Hard Part — Audio Pipeline
+## Call Flow (Sarvam Pipeline — Full Sequence)
 
-Vobiz sends **8kHz Mu-law** audio. Gemini wants **16kHz PCM**. Gemini responds at **24kHz PCM**. Vobiz needs **8kHz Mu-law** back.
-
-Three sample rate conversions per call, bidirectionally, in real time, while preserving `ratecv` state across chunks to avoid audio artifacts at chunk boundaries.
-
-```python
-# Inbound: Vobiz → Gemini
-mulaw_data = base64.b64decode(payload)
-pcm_8k = audioop.ulaw2lin(mulaw_data, 2)
-pcm_16k, upsample_state = audioop.ratecv(pcm_8k, 2, 1, 8000, 16000, upsample_state)
-
-# Outbound: Gemini → Vobiz
-pcm_8k, downsample_state = audioop.ratecv(pcm_24k, 2, 1, 24000, 8000, downsample_state)
-mulaw_data = audioop.lin2ulaw(pcm_8k, 2)
 ```
+1. Phone rings → Vobiz fires POST /answer
+2. Server checks active_provider → redirects to /sarvam-stream WebSocket
+3. Deepgram WebSocket opened → keep-alive loop starts
+4. Priya speaks greeting: "नमस्ते! नेहा चाइल्ड केयर में आपका स्वागत है..."
+5. Caller speaks → Deepgram streams interim transcripts
+     └─ Confidence < 0.55  → dropped (ambient noise filter)
+     └─ Single greeting word → "जी, बताइए।" (no LLM needed)
+     └─ ≥ 2 words interim, Priya is speaking → BARGE-IN: cancel TTS task
+6. Final transcript arrives → handle_transcript()
+     └─ is_responding = True  (queue any new transcript until done)
+     └─ History appended → LLM streamed
+7. LLM streams response text + optional tool_call
+     └─ Text sentences flushed sentence-by-sentence to TTS
+     └─ speak() called: TTS → PCM → recorder.write_priya() → mulaw → WebSocket
+     └─ asyncio.sleep(playback_secs) holds is_speaking=True for barge-in window
+8. Tool call detected → execute IMMEDIATELY (no extra LLM round-trip):
+     check_available_slots → direct slot-offer reply (skip second LLM call)
+     book_appointment      → scripted confirmation from tool result
+     cancel_appointment    → if followup LLM wants book_appointment, execute it
+                             (name-correction rebook — no user re-confirmation needed)
+9. Booking guard: book_appointment only fires if last user turn ∈ CONFIRMATION_WORDS
+10. Past-time guard: book_appointment rejects slots where appt_dt ≤ now()
+11. Call ends → finally block:
+     → wait for in-flight speak_task (up to 3 s) before saving recording
+     → _TimelineRecorder.save() → stereo WAV (caller left, Priya right)
+     → send_call_summary_email() with full transcript
+     → store.end_call() → metrics logged
+```
+
+---
+
+## Booking Flow (LLM Rules)
+
+```
+Step 1 — Extract NAME and REASON from conversation history
+          • Any symptom mentioned = REASON — never ask again
+          • Any child name mentioned = NAME — never ask again
+          • Name correction "X नहीं Y है" → use Y (latest name wins)
+          → BOTH known: skip to Step 2
+          → Only one known: ask for the missing one only
+          → Neither known: ask both in one question
+
+Step 2 — call check_available_slots(preferred_day='Today')
+          Never ask caller for day — use REAL-TIME clock
+
+Step 3 — Offer ONE slot: "क्या [time_hi] का समय ठीक रहेगा?"
+          If no → offer next slot
+
+Step 4 — ONLY after explicit YES → call book_appointment
+          YES words: हाँ, ठीक है, ठीक रहेगा, okay, हो जाए, बिल्कुल, चलेगा, ...
+
+Step 5 — book_appointment runs concurrently:
+          Google Sheets append + Calendar event + Email with .ics
+
+Step 6 — Speak confirmation_message from tool result verbatim
+```
+
+**Name-correction rebook:** If the caller corrects the name after a booking, Priya calls `cancel_appointment` for the old name and **immediately** calls `book_appointment` with the corrected name, same reason, same slot — no re-confirmation needed.
+
+---
+
+## Google Sheets Column Layout
+
+Every booking appends one row to `Sheet1`:
+
+| Column | Field | Example |
+|--------|-------|---------|
+| A | Patient Name | Trishna |
+| B | Patient Problems | बुखार |
+| C | Parents Name | Guardian |
+| D | Is appointment Booked | Yes / Cancelled |
+| E | Booking time | 2026-04-15 10:20 |
+| F | Child Age | 5 |
+| G | Booking Slot | 10:20 AM |
+| H | Contact Number | 917042915552 |
+
+`cancel_appointment` marks column D as "Cancelled" and deletes the Google Calendar event.
+
+---
+
+## Recording — Stereo Timeline WAV
+
+Every call produces a stereo `.wav` saved to `recordings/`:
+
+```
+Left channel  = caller audio  (mulaw decoded, 8 kHz PCM)
+Right channel = Priya audio   (TTS PCM before mulaw encoding)
+Sample rate   = 8000 Hz
+Bit depth     = 16-bit PCM LE
+```
+
+`_TimelineRecorder` uses wall-clock timestamps to place each audio chunk at its real position — no overlaps, no silence gaps. The `finally` block waits up to 3 seconds for any in-flight TTS task to finish writing before saving.
+
+---
+
+## Emails Sent
+
+| Trigger | Subject | Content |
+|---------|---------|---------|
+| Booking confirmed | `Appointment Booked: {patient_name}` | Details + .ics calendar invite |
+| Call ends | `Call Summary: Neha Child Care` | Caller ID, duration, full transcript |
+
+---
+
+## Key Design Patterns
+
+| Pattern | Implementation |
+|---------|---------------|
+| **Barge-in** | Interim transcript ≥ 2 words → `speak_task.cancel()` + `clearAudio` event |
+| **Noise filter** | Deepgram confidence < 0.55 → transcript dropped |
+| **Greeting shortcut** | Single-word greetings (hello/नमस्ते) → hardcoded reply, no LLM |
+| **Direct slot reply** | After `check_available_slots`, slot offer built in Python — no second LLM call |
+| **Scripted booking confirm** | Confirmation text comes from `tool.result.confirmation_message`, not LLM |
+| **Followup tool execution** | After `cancel_appointment`, if LLM returns `book_appointment` in followup → executed immediately |
+| **Booking guard** | `book_appointment` only executes if previous user turn is in `CONFIRMATION_WORDS` |
+| **Past-time guard** | `book_appointment` rejects `appt_dt ≤ datetime.now()` |
+| **Repeat-caller detection** | `APPOINTMENTS_DB` checked at call start — existing booking surfaced in system prompt |
+| **Keep-alive** | 20 ms silence sent every 0.8 s to prevent Vobiz from hanging up |
+| **WAV header strip** | TTS returns RIFF WAV — `wave.open(BytesIO)` extracts raw PCM before playback |
+| **ratecv state** | `audioop.ratecv()` state preserved across chunks — no resampling artifacts |
+| **Concurrent booking** | `ThreadPoolExecutor` runs Sheets + Calendar + Email in parallel (~3× faster) |
 
 ---
 
 ## Project Structure
 
 ```
-vobiz_main.py          — Main server, WebSocket bridge (Vobiz ↔ Gemini)
-pharmacy_functions.py  — Booking logic: Sheets, Calendar, Email
-app_config.json        — All script/persona config (edit this, not the code)
-google-credentials.json — Google service account credentials
-.env                   — API keys
-```
+app.py                    — Main server (aiohttp, port 5050, both pipelines)
+app_config.json           — Agent persona, clinic hours, scripts, active_provider
+pharmacy_functions.py     — Tool implementations (booking, cancel, reschedule, slots)
 
-### app_config.json
-All agent behaviour lives here — greeting, system prompt, clinic hours, booking flow scripts. No code changes needed to customise the agent.
+metrics/
+  collector.py            — CallMetrics, MetricsStore singleton, resource poller
+  cost_calculator.py      — Cost math (Deepgram + Sarvam + Gemini pricing)
+  dashboard_html.py       — Chart.js live metrics dashboard
+
+recordings/               — Stereo WAV files, one per call (gitignored)
+benchmarks/               — Offline scenario harness (gitignored)
+
+.env                      — All API keys (gitignored — never commit)
+google-credentials.json   — Google service account JSON (gitignored — never commit)
+.env.example              — Template showing required keys (safe to commit)
+requirements.txt          — Python dependencies
+```
 
 ---
 
-## 🛠 Setup & Installation
+## app_config.json
 
-Follow these steps to set up the AI Voice Receptionist on your local machine.
+All agent behaviour lives here. Change persona, hours, or scripts without touching code:
 
-### 1. Prerequisite: Python Version
-Ensure you have **Python 3.10 to 3.12** installed. 
-> [!IMPORTANT]
-> This project uses `audioop`, which was deprecated in Python 3.13. Please use Python 3.12 or lower.
-
-### 2. Clone and Create Virtual Environment
-```bash
-# Create a virtual environment
-python -m venv venv
-
-# Activate it (Windows)
-.\venv\Scripts\activate
-
-# Activate it (Linux/Mac)
-source venv/bin/activate
+```json
+{
+  "agent": {
+    "name": "Priya",
+    "role": "Senior Receptionist",
+    "business": "Neha Child Care",
+    "system_prompt": "आप प्रिया हैं — नेहा चाइल्ड केयर की रिसेप्शनिस्ट..."
+  },
+  "clinic": {
+    "hours": {
+      "morning": "10:00 AM to 12:00 PM",
+      "evening": "06:00 PM to 08:00 PM",
+      "sunday": "Closed"
+    }
+  },
+  "scripts": {
+    "greeting": "नमस्ते! नेहा चाइल्ड केयर में आपका स्वागत है...",
+    "booking_confirmation": "{day} {time} {patient_name} का appointment मैंने book कर दिया है।..."
+  },
+  "active_provider": "sarvam"
+}
 ```
 
-### 3. Install Dependencies
+---
+
+## Setup
+
+### 1. Python version
+
+Use **Python 3.10–3.12**. Python 3.13 removed `audioop` which this project depends on.
+
+### 2. Clone and create virtual environment
+
+```bash
+git clone https://github.com/alokranjan04/gemini_hinglish_voice_agent.git
+cd gemini_hinglish_voice_agent
+
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Linux / macOS
+source .venv/bin/activate
+```
+
+### 3. Install dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
-Copy the `.env.example` file to `.env` and fill in your API keys:
-```bash
-cp .env.example .env
+### 4. Configure `.env`
+
+Create a `.env` file in the project root (never commit this):
+
+```env
+# Sarvam pipeline
+DEEPGRAM_API_KEY=your_deepgram_key
+SARVAM_API_KEY=your_sarvam_key
+
+# Gemini pipeline
+GEMINI_API_KEY=your_gemini_key
+
+# Google integrations (both pipelines)
+GOOGLE_CALENDAR_ID=your_calendar_id@gmail.com
+GOOGLE_SPREADSHEET_ID=your_sheet_id
+
+# Option A — credentials file (recommended)
+# Save as google-credentials.json in project root
+
+# Option B — inline JSON in env var
+GOOGLE_CREDENTIALS={"type":"service_account","project_id":"...","private_key":"..."}
+
+# Email (Gmail SMTP)
+GMAIL_USER=your@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
+DOCTOR_EMAIL=doctor@example.com
 ```
-Fill in the following in `.env`:
-*   `GEMINI_API_KEY`: Get from [Google AI Studio](https://aistudio.google.com/)
-*   `GOOGLE_CALENDAR_ID`: Your Gmail address (or a specific calendar ID)
-*   `GMAIL_USER`: Your Gmail address for sending notifications
-*   `GMAIL_APP_PASSWORD`: Generate an [App Password](https://myaccount.google.com/apppasswords) for your Gmail account.
-*   `DOCTOR_EMAIL`: The email address where call summaries should be sent.
 
-### 5. Google Cloud Service Account
-1.  Go to [Google Cloud Console](https://console.cloud.google.com/).
-2.  Enable **Google Sheets API** and **Google Calendar API**.
-3.  Create a **Service Account** and download the JSON key file.
-4.  Rename the file to `google-credentials.json` and place it in the project root.
-5.  **Share** your Google Sheet and Google Calendar with the service account's email (found in the JSON) as an **Editor**.
+### 5. Google Cloud service account
 
-### 6. Run the Server
-```bash
-python vobiz_main.py
+1. [Google Cloud Console](https://console.cloud.google.com/) → Enable **Sheets API** + **Calendar API**
+2. IAM & Admin → Service Accounts → Create → download JSON key
+3. Save as `google-credentials.json` in project root
+4. Share your Google Sheet and Calendar with the service account email as **Editor**
+
+### 6. Google Sheet setup
+
+Create a sheet named `Sheet1` with these headers in row 1:
+
+```
+A: Patient Name  |  B: Patient Problems  |  C: Parents Name  |  D: Is appointment Booked
+E: Booking time  |  F: Child Age         |  G: Booking Slot  |  H: Contact Number
 ```
 
-### 7. Expose to the Internet (ngrok)
-Vobiz needs a public URL to send Webhooks to your local server.
+### 7. Run
+
+```bash
+python app.py
+```
+
+Dashboard at `http://localhost:5050/`
+
+### 8. Expose via ngrok (for Vobiz)
+
 ```bash
 ngrok http 5050
 ```
-Copy the `https://...` URL from ngrok and update your **Vobiz Webhook Answer URL** to:
-`https://your-ngrok-url.ngrok-free.app/answer`
+
+Set Vobiz **Answer URL** to:
+```
+https://your-ngrok-url.ngrok-free.app/answer
+```
 
 ---
 
-## Google Credentials
+## Switching Pipelines
 
-The service account needs:
-- **Google Sheets**: Share the booking sheet with the service account email as Editor
-- **Google Calendar**: Share your calendar with the service account email with "Make changes to events" permission
+**Dashboard** (live, no restart):
+```
+http://localhost:5050/
+```
+
+**REST API**:
+```bash
+curl -X POST http://localhost:5050/api/set-provider \
+     -H "Content-Type: application/json" \
+     -d '{"provider": "sarvam"}'   # or "google"
+```
+
+**app_config.json**:
+```json
+{ "active_provider": "sarvam" }
+```
+
+---
+
+## API Routes
+
+| Method | Route | Purpose |
+|--------|-------|---------|
+| POST | `/answer` | Vobiz webhook — call arrives here |
+| GET | `/sarvam-stream` | WebSocket — Sarvam pipeline handler |
+| GET | `/gemini-stream` | WebSocket — Gemini pipeline handler |
+| POST | `/api/set-provider` | Switch pipeline live |
+| GET | `/` | Web dashboard |
+| GET | `/metrics` | Metrics dashboard |
+| GET | `/metrics/data` | JSON metrics API |
+| GET | `/recordings/` | Browse call recordings |
+
+---
+
+## API Keys Required
+
+| Key | Pipeline | Source |
+|-----|----------|--------|
+| `DEEPGRAM_API_KEY` | Sarvam (STT) | [deepgram.com](https://deepgram.com) |
+| `SARVAM_API_KEY` | Sarvam (LLM + TTS) | [sarvam.ai](https://www.sarvam.ai) |
+| `GEMINI_API_KEY` | Google | [aistudio.google.com](https://aistudio.google.com) |
+| `GOOGLE_CALENDAR_ID` | Both | Google Calendar settings |
+| `GOOGLE_SPREADSHEET_ID` | Both | Google Sheets URL |
+| `GMAIL_APP_PASSWORD` | Both | [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |
+
+---
+
+## Cost Estimate (per 5-minute call)
+
+| Pipeline | STT | LLM | TTS | Approx Total |
+|----------|-----|-----|-----|-------------|
+| Sarvam | $0.039 (Deepgram) | ~$0.010 (Sarvam 30B) | ~$0.006 (Bulbul v2) | **~$0.055** |
+| Google | — | $0.012 (Gemini Live blended) | — | **~$0.012** |
+
+*Estimates as of April 2026. Gemini is cheaper; Sarvam gives finer control and better Hindi transcription accuracy.*
+
+---
+
+## Security
+
+- `.env` and `google-credentials.json` are gitignored — **never commit them**
+- Service account credentials should use **minimum required scopes** only (Sheets Editor + Calendar Editor)
+- If a credential file is accidentally committed, **revoke the key immediately** in Google Cloud Console → IAM & Admin → Service Accounts → Keys
 
 ---
 
@@ -178,10 +446,8 @@ The service account needs:
 
 **Alok Ranjan**
 
-If you're building something similar, have questions about the stack, or just want to geek out about voice AI — feel free to connect on LinkedIn or open an issue.
+Questions, feedback, or building something similar — open an issue or connect on LinkedIn.
 
 ---
 
-## Tags
-
-`voice-ai` `gemini-live` `hinglish` `healthcare-ai` `india` `python` `asyncio` `zero-cost` `vobiz` `google-calendar` `appointment-booking`
+`hindi` `voice-ai` `gemini-live` `sarvam-ai` `deepgram` `google-calendar` `google-sheets` `appointment-booking` `healthcare-ai` `india` `asyncio` `aiohttp` `websocket` `vobiz`
