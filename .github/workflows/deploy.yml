@@ -6,11 +6,10 @@ on:
   workflow_dispatch:   # allow manual trigger from GitHub UI
 
 env:
-  PROJECT_ID:  ${{ secrets.GCP_PROJECT_ID }}
-  REGION:      asia-south1                    # Mumbai — lowest latency for India calls
-  SERVICE:     priya-agent
-  REGISTRY:    asia-south1-docker.pkg.dev
-  IMAGE:       asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/priya/priya-agent
+  REGION:   asia-south1
+  SERVICE:  priya-agent
+  REGISTRY: asia-south1-docker.pkg.dev
+  IMAGE:    asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/priya/priya-agent
 
 jobs:
   deploy:
@@ -18,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write    # required for Workload Identity Federation (if used)
+      id-token: write
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────
@@ -37,7 +36,7 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      # ── 4. Configure Docker to push to Artifact Registry ─────────────────
+      # ── 4. Configure Docker ───────────────────────────────────────────────
       - name: Configure Docker
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
@@ -57,18 +56,29 @@ jobs:
           docker push ${{ env.IMAGE }}:latest
 
       # ── 7. Deploy to Cloud Run ────────────────────────────────────────────
-      #
-      # GOOGLE_CREDENTIALS is stored in GCP Secret Manager (not as env var)
-      # to avoid JSON/comma issues in --set-env-vars.
-      # All other secrets are plain strings and safe to pass as env vars.
-      #
-      # One-time setup required (see README — Cloud Run Setup):
-      #   gcloud secrets create google-credentials --data-file=google-credentials.json
-      #   gcloud secrets add-iam-policy-binding google-credentials \
-      #     --member="serviceAccount:SA_EMAIL" --role="roles/secretmanager.secretAccessor"
-      #
+      # Secrets are injected as step env vars first, then assembled into a
+      # clean comma-separated string — avoids all shell quoting/newline issues.
+      # GOOGLE_CREDENTIALS comes from GCP Secret Manager (JSON-safe, no commas).
       - name: Deploy to Cloud Run
+        env:
+          SARVAM_API_KEY:       ${{ secrets.SARVAM_API_KEY }}
+          DEEPGRAM_API_KEY:     ${{ secrets.DEEPGRAM_API_KEY }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_CALENDAR_ID:   ${{ secrets.GOOGLE_CALENDAR_ID }}
+          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          GMAIL_USER:           ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:   ${{ secrets.GMAIL_APP_PASSWORD }}
+          DOCTOR_EMAIL:         ${{ secrets.DOCTOR_EMAIL }}
         run: |
+          ENV_VARS="SARVAM_API_KEY=${SARVAM_API_KEY}"
+          ENV_VARS="${ENV_VARS},DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}"
+          ENV_VARS="${ENV_VARS},GEMINI_API_KEY=${GEMINI_API_KEY}"
+          ENV_VARS="${ENV_VARS},GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID}"
+          ENV_VARS="${ENV_VARS},GOOGLE_SPREADSHEET_ID=${GOOGLE_SPREADSHEET_ID}"
+          ENV_VARS="${ENV_VARS},GMAIL_USER=${GMAIL_USER}"
+          ENV_VARS="${ENV_VARS},GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD}"
+          ENV_VARS="${ENV_VARS},DOCTOR_EMAIL=${DOCTOR_EMAIL}"
+
           gcloud run deploy ${{ env.SERVICE }} \
             --image=${{ env.IMAGE }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
@@ -82,15 +92,7 @@ jobs:
             --timeout=3600 \
             --session-affinity \
             --set-secrets="GOOGLE_CREDENTIALS=google-credentials:latest" \
-            --set-env-vars="\
-          SARVAM_API_KEY=${{ secrets.SARVAM_API_KEY }},\
-          DEEPGRAM_API_KEY=${{ secrets.DEEPGRAM_API_KEY }},\
-          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},\
-          GOOGLE_CALENDAR_ID=${{ secrets.GOOGLE_CALENDAR_ID }},\
-          GOOGLE_SPREADSHEET_ID=${{ secrets.GOOGLE_SPREADSHEET_ID }},\
-          GMAIL_USER=${{ secrets.GMAIL_USER }},\
-          GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }},\
-          DOCTOR_EMAIL=${{ secrets.DOCTOR_EMAIL }}"
+            --set-env-vars="${ENV_VARS}"
 
       # ── 8. Print deployed URL ─────────────────────────────────────────────
       - name: Get service URL
@@ -99,5 +101,5 @@ jobs:
             --region=${{ env.REGION }} \
             --format="value(status.url)")
           echo "✅ Deployed: $URL"
-          echo "   Answer URL for Vobiz: $URL/answer"
-          echo "   Dashboard: $URL/"
+          echo "   Vobiz Answer URL : $URL/answer"
+          echo "   Dashboard        : $URL/"
