@@ -503,7 +503,7 @@ async def sarvam_handler(request):
         "    • सुबह: 10:00 AM – 12:00 PM\n"
         "    • शाम: 06:00 PM – 08:00 PM\n"
         "    Sunday: CLOSED.\n"
-        "    If caller asks for a time OUTSIDE these hours (जैसे दोपहर 2 बजे, 3 बजे, 4 बजे, "
+        "    If caller asks for a time OUTSIDE these hours (जैसे दोपहर 2 बजे, 3 बजे, 4 बजे,"
         "5 बजे) say: 'डॉक्टर सुबह दस से बारह और शाम छह से आठ बजे मिलते हैं।' then offer "
         "the next available slot from check_available_slots.\n"
         "    After 12:00 PM, morning slots are GONE — NEVER offer them. "

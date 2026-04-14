@@ -7,6 +7,8 @@ google-credentials.json
 *credentials*.json
 *-credentials*.json
 *service-account*.json
+*-key*.json
+gha-key*.json
 fix_credentials.py
 debug_creds.py
 debug_google.py
