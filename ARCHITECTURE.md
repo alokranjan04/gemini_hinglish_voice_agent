@@ -1,54 +1,246 @@
-# 🏗️ Technical Architecture: Omni-Voice Native S2S
+# Technical Architecture: Priya — AI Voice Receptionist
 
-This document outlines the technical design of the Native Speech-to-Speech (S2S) bridge. The architecture is designed for **Near-Zero Latency** and **Legacy Compatibility.**
-
----
-
-## 1. Dual-Protocol Audio Bridge
-
-The core of the system is an asynchronous WebSocket bridge that translates between telephony standards and multimodal AI requirements.
-
-*   **Ingress (Twilio)**: Streams 8kHz G.711 Mu-law audio.
-*   **Translation Layer**: Uses `audioop` to convert Mu-law to 16-bit PCM (Linear16).
-*   **Egress (Gemini)**: Streams 16-bit PCM at 24kHz to the `BidiGenerateContent` endpoint.
-*   **Synthesis**: Gemini generates the response natively as PCM audio, which the bridge downsamples back to 8kHz Mu-law for the Twilio stream.
-
-## 2. Asynchronous Event Loop
-
-Built on `asyncio`, the system manages three concurrent tasks during a live call:
-1.  **Twilio Receiver**: Buffers incoming user audio and forwards it to Gemini.
-2.  **Gemini Receiver**: Processes multimodal responses, including tool calls and audio/text chunks.
-3.  **Heartbeat/Monitoring**: Maintains connection health and handles cleanup on disconnect.
-
-## 3. Distributed Integration Layer (The Toolkit)
-
-The agent uses **Function Calling** to interact with external business logic.
-- **State Management**: The `pharmacy_functions.py` module acts as the source of truth for clinic availability.
-- **Integration Registry**: A `FUNCTION_MAP` maps JSON tool calls to Python execution logic for Google Calendar and Sheets.
-- **Security**: Authentication is managed via a dedicated Google Service Account with scoped IAM permissions.
-
-## 4. Post-Call Analytical Pipeline
-
-Once the WebSocket closes, a secondary asynchronous block triggers:
-- **Transcription Reconstruction**: Merges `inputTranscription` and `outputTranscription` into a unified dialogue log.
-- **AI Summary**: Uses a standard Gemini Flash 1.5 instance to extract clinical intent and outcomes.
-- **Notification**: Dispatches HTML reports via SMTP (Gmail) to the clinic owner.
+**Deployment:** Neha Child Care Pediatric Clinic  
+**Status:** Production  
+**Last updated:** April 2026
 
 ---
 
-## 5. Vobiz Native Audio Pipeline (16kHz)
+## 1. System Overview
 
-The system now supports **Vobiz.ai** for localized Indian deployments.
-- **Superior Fidelity**: Unlike Twilio's 8kHz Mu-law, Vobiz supports **16kHz Linear PCM** natively.
-- **Latency Reduction**: By matching Gemini's native 16kHz input requirements, we eliminate the Mu-law-to-PCM translation and resampling steps, reducing total round-trip time (RTT).
+Priya is an inbound voice AI receptionist that answers calls forwarded from the clinic's Vobiz number, conducts a natural Hinglish conversation, and performs real-time appointment management. The system runs on a single `aiohttp` async server and supports two runtime pipelines.
 
-## 6. Observability Framework (Call Telemetry)
+```
+Caller → Vobiz → POST /answer (webhook)
+                    │
+                    ├─── WebSocket /sarvam-stream  ──► Sarvam pipeline (primary)
+                    └─── WebSocket /gemini-stream  ──► Gemini pipeline (alternative)
+```
 
-The agent now includes a professional observability layer to track production KPIs:
-- **TTFT (Time to First Token)**: Measured from the moment the user stops speaking to the first byte of AI audio.
-- **Session Duration**: Precise tracking of billable conversation time.
-- **Multi-Modal Costing**: Real-time estimation of Gemini API costs based on model turn density.
+---
 
-## 7. Multi-Cloud Ready Pattern
+## 2. Telephony Layer (Vobiz)
 
-The architecture follows a **Provider Interface Pattern**. By separating the core logic from the telephony provider (`twilio_handler` vs `vobiz_handler`), the system is now vendor-agnostic and ready for future integrations.
+Vobiz.ai is the telephony provider for Indian deployments.
+
+- **Audio format in:** 16kHz Linear PCM (no Mu-law translation needed)
+- **Audio format out:** 16kHz Linear PCM
+- **Call setup:** Vobiz POSTs to `POST /answer` on call connect; the response body is an XML-like instruction telling Vobiz to open a WebSocket stream to `/sarvam-stream` or `/gemini-stream`
+- **Caller ID:** Passed in the webhook POST body; used as the contact number for booking lookups
+- **Session lifecycle:** WebSocket open → conversation → WebSocket close → post-call processing
+
+---
+
+## 3. Dual Pipeline Architecture
+
+### 3.1 Sarvam Pipeline (Primary)
+
+Three separate services chained in sequence:
+
+| Stage | Service | Notes |
+|-------|---------|-------|
+| STT | Deepgram Nova-3 | Streaming, Hinglish-optimised, interim + final results |
+| LLM | Sarvam-2B-Instruct (30B) | Streaming token output, system prompt in Hinglish |
+| TTS | Sarvam Bulbul v2 | Hindi/Hinglish voice, chunked audio streaming |
+
+**Data flow:**
+1. Raw PCM from Vobiz → Deepgram streaming WebSocket
+2. Deepgram final transcript → appended to `history` list
+3. `history` + system prompt → Sarvam LLM (streaming)
+4. LLM token stream → sentence-chunked → Sarvam TTS
+5. TTS audio chunks → written to recorder + sent back to Vobiz WS
+6. LLM tool calls intercepted mid-stream → executed → result injected as tool message → LLM continues
+
+**Tool call handling:**
+- After the primary response stream, a `followup_tools` check runs
+- If `last_fn == "cancel_appointment"` and LLM returned a `book_appointment` in followup, it executes immediately (name-correction rebook flow)
+
+### 3.2 Gemini Pipeline (Alternative)
+
+Uses Google Gemini 2.0 Flash Live (`BidiGenerateContent` WebSocket) for full end-to-end audio I/O.
+
+- Audio in/out: 16kHz PCM (matches Vobiz natively — no resampling)
+- Single WebSocket carries both user audio (upstream) and Gemini audio (downstream)
+- Tool calls returned in `tool_call` message chunks, executed via `FUNCTION_MAP`
+- Post-call summary generated by a separate `gemini-1.5-flash` REST call over the transcript
+
+---
+
+## 4. Conversation Engine
+
+### 4.1 System Prompt
+
+The system prompt (loaded from `app_config.json`) defines Priya's persona, language rules, and booking protocol in Hinglish. Key rules:
+
+- **Rule 5 Step 1 — Name extraction:** `X नहीं Y है` / `नाम Y है` → latest mentioned name is correct
+- **Rule 6b — Cancel + rebook:** After `cancel_appointment`, immediately call `book_appointment` with corrected name, same reason and slot
+- **Rule 7 — Memory:** If caller says `बता चुके हैं` or `अभी तो बताया था`, use what is already in the conversation history
+
+### 4.2 Function Map (`FUNCTION_MAP`)
+
+All tools are synchronous Python functions run via `asyncio.to_thread`:
+
+| Tool | Action |
+|------|--------|
+| `check_availability` | Returns free slots from Google Calendar |
+| `book_appointment` | Creates Calendar event + writes Sheet row + sends .ics email |
+| `cancel_appointment` | Marks Sheet row column D as "Cancelled" + deletes Calendar event |
+| `reschedule_appointment` | Cancel + rebook in one step |
+| `get_appointment_details` | Lookup by name or phone in Sheet |
+
+---
+
+## 5. Google Integrations (`pharmacy_functions.py`)
+
+### 5.1 Google Calendar
+
+- **Auth:** Service account with `calendar.events` scope
+- **Availability check:** Queries free/busy for the clinic's calendar ID
+- **Booking:** Creates event with patient name, reason, contact in description
+- **Cancel:** Deletes event by event ID stored in Sheet
+
+### 5.2 Google Sheets — Column Layout
+
+All appointments are written to `Sheet1` with this fixed column order:
+
+| Column | Field |
+|--------|-------|
+| A | Patient Name |
+| B | Patient Problems / Reason |
+| C | Parent's Name |
+| D | Is Appointment Booked (`Yes` / `Cancelled`) |
+| E | Booking Timestamp |
+| F | Child Age |
+| G | Preferred Slot |
+| H | Contact Number |
+
+`_find_sheet_rows` searches column A for name and column H (index 7) for phone. Cancelled rows are skipped.
+
+### 5.3 Email (Gmail SMTP)
+
+- **Booking confirmation:** HTML email to doctor + .ics calendar attachment
+- **Call summary:** Sent at end of every call — contains AI-generated summary + full transcript
+- **Auth:** Gmail App Password (not OAuth) — stored in `.env` / Secret Manager
+
+---
+
+## 6. Call Recording (`_TimelineRecorder`)
+
+Every call produces a stereo WAV file:
+
+- **Format:** PCM-16 LE, 8kHz, 2-channel stereo
+- **Channel layout:** Left = caller audio, Right = Priya's audio
+- **Placement:** Audio is placed at wall-clock offset (seconds since call start) so silence gaps are preserved accurately
+- **Write timing:** `recorder.write_priya()` is called **before** the WebSocket send check — so the last audio chunk is always captured even if the WebSocket closes mid-stream
+- **Save timing:** `finally` block waits up to 3 seconds for any in-flight `speak_task` to complete before calling `recorder.save()` — prevents truncated recordings
+- **Storage:** `recordings/` directory, filename = `{call_sid}_{timestamp}.wav`
+
+---
+
+## 7. Observability (`metrics/` module)
+
+| Metric | How captured |
+|--------|-------------|
+| TTFT (Time to First Token) | Timestamp delta: last user audio → first TTS byte |
+| Session duration | Call start to WebSocket close |
+| LLM cost estimate | Token count × model rate |
+| Tool calls | Logged per call with args + result |
+| Outcome | `booked` / `cancelled` / `rescheduled` / `info_only` / `escalated` |
+
+Data written to `metrics/call_log.jsonl` (one JSON line per call).
+
+Dashboard served at `GET /` — HTML page with call stats, cost breakdown, and recent call log.
+
+---
+
+## 8. Server (`app.py`)
+
+Built on `aiohttp`:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/answer` | POST | Vobiz webhook — returns stream instruction |
+| `/sarvam-stream` | WebSocket | Sarvam pipeline handler |
+| `/gemini-stream` | WebSocket | Gemini pipeline handler |
+| `/` | GET | Metrics dashboard (HTML) |
+| `/metrics` | GET | Raw JSON metrics |
+| `/recordings/{filename}` | GET | Serve WAV recording files |
+
+**Port:** `PORT` env var (default `5050`) — Cloud Run injects this automatically.
+
+---
+
+## 9. Async Concurrency Model
+
+Each WebSocket connection runs in its own coroutine. Within a call:
+
+- **Sarvam pipeline:** Deepgram WS reader, LLM stream processor, and TTS speak tasks run concurrently via `asyncio.create_task`
+- **Gemini pipeline:** Single BidiGenerateContent WS with interleaved send/receive loop + a separate `g_task` for response processing
+- **`finally` block discipline:** Both handlers shield in-flight tasks with `asyncio.wait_for(asyncio.shield(task), timeout=N)` before saving recordings — prevents data loss on abrupt disconnects
+
+---
+
+## 10. Deployment
+
+### 10.1 Google Cloud Run (CI/CD)
+
+```
+git push main
+    → GitHub Actions (.github/workflows/deploy.yml)
+    → docker build (python:3.11-slim, non-root user)
+    → push to Artifact Registry (asia-south1-docker.pkg.dev)
+    → gcloud run deploy priya-agent
+        --region=asia-south1
+        --min-instances=1        # no cold starts
+        --max-instances=10
+        --memory=512Mi
+        --timeout=3600           # WebSocket calls up to 1 hour
+        --session-affinity       # sticky routing for WebSocket
+        --set-secrets GOOGLE_CREDENTIALS=google-credentials:latest
+        --env-vars-file /tmp/env-vars.yaml   # handles GMAIL_APP_PASSWORD with spaces
+```
+
+**Secrets:** All API keys in GitHub Secrets → Cloud Run env vars. `google-credentials.json` in GCP Secret Manager, mounted at runtime.
+
+### 10.2 VPS / Self-Hosted (`deploy/`)
+
+For bare-metal or VPS deployments (Ubuntu 22.04):
+
+| File | Purpose |
+|------|---------|
+| `deploy/setup.sh` | One-time setup: apt packages, ufw, nginx, certbot SSL, systemd |
+| `deploy/update.sh` | Rolling update: `git pull` + `pip install` + `systemctl restart` |
+| `deploy/nginx.conf` | Reverse proxy: rate-limit on `/answer`, WebSocket upgrade for streams, 3600s timeout |
+| `deploy/priya.service` | systemd unit: `User=priya`, `EnvironmentFile`, `Restart=always`, `MemoryMax=1G` |
+
+nginx handles TLS termination (Let's Encrypt) and proxies to `127.0.0.1:5050`.
+
+---
+
+## 11. Security
+
+| Concern | Mitigation |
+|---------|-----------|
+| API keys | `.env` file never committed; `.gitignore` covers `*.env`, `*-key*.json`, `gha-key*.json` |
+| Google credentials | `google-credentials.json` in GCP Secret Manager; gitignored locally |
+| GCP service account | Least-privilege: only Calendar, Sheets, Secret Manager accessor |
+| Webhook abuse | nginx rate limit: 10 req/min per IP on `/answer` |
+| Call recordings | Stored in `recordings/` (gitignored); not exposed publicly without auth |
+| SMTP | Gmail App Password (not account password); scoped to send-only |
+
+---
+
+## 12. Environment Variables
+
+| Variable | Used by |
+|----------|---------|
+| `DEEPGRAM_API_KEY` | Sarvam pipeline STT |
+| `SARVAM_API_KEY` | Sarvam LLM + TTS |
+| `GEMINI_API_KEY` | Gemini pipeline + post-call summary |
+| `GOOGLE_CALENDAR_ID` | Calendar availability + booking |
+| `GOOGLE_SPREADSHEET_ID` | Sheet read/write |
+| `GMAIL_USER` | SMTP sender address |
+| `GMAIL_APP_PASSWORD` | SMTP auth (may contain spaces) |
+| `DOCTOR_EMAIL` | Booking confirmation + call summary recipient |
+| `GOOGLE_CREDENTIALS` | Service account JSON (Cloud Run: from Secret Manager) |
+| `PORT` | Server listen port (Cloud Run injects; default 5050) |
