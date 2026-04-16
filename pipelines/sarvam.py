@@ -257,8 +257,8 @@ async def sarvam_handler(request):
             if call_metrics:
                 call_metrics.record_turn("user", transcript)
 
-            if len(history) > 12:
-                history[1:] = history[-11:]
+            if len(history) > 24:
+                history[1:] = history[-23:]
 
             t_llm      = time.time()
             full_text  = ""
@@ -387,7 +387,16 @@ async def sarvam_handler(request):
                     if slots_res.get("urgent_message"):
                         slot_reply = slots_res["urgent_message"]
                     elif slots_res.get("available_slots"):
-                        first_hi   = time_to_hindi(slots_res["available_slots"][0])
+                        # Smart selection: if user mentioned a time, try to match it
+                        best_slot = slots_res["available_slots"][0]
+                        user_pref_lower = transcript.lower()
+                        for s in slots_res["available_slots"]:
+                            # basic match for strings like "7", "seven", "सात"
+                            if any(x in user_pref_lower for x in [s.split(":")[0].lstrip("0"), time_to_hindi(s)]):
+                                best_slot = s
+                                break
+                        
+                        first_hi = time_to_hindi(best_slot)
                         slot_reply = f"क्या आज {first_hi} का समय ठीक रहेगा?"
                     else:
                         tmr = await asyncio.to_thread(

@@ -88,12 +88,17 @@ def get_google_creds():
 
         pk = data.get("private_key", "")
         if pk:
-            # Handle both escaped and literal newlines
+            # 1. Clean up potential wrap-around quotes or noise
+            pk = pk.strip().strip("'").strip('"')
+            # 2. Repair newlines (covers \n, \\n, and literal newlines)
             pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
-            if not pk.startswith("-----BEGIN"):
+            # 3. Ensure standard headers exist
+            if "-----BEGIN PRIVATE KEY-----" not in pk:
                 pk = "-----BEGIN PRIVATE KEY-----\n" + pk
-            if not pk.endswith("-----END PRIVATE KEY-----"):
+            if "-----END PRIVATE KEY-----" not in pk:
                 pk = pk + "\n-----END PRIVATE KEY-----"
+            # 4. Collapse any accidental double-headers
+            pk = pk.replace("-----BEGIN PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----")
             data["private_key"] = pk.strip()
 
         return data
