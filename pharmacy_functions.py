@@ -88,8 +88,12 @@ def get_google_creds():
 
         pk = data.get("private_key", "")
         if pk:
-            pk = pk.replace("\\n", "\n")
-            pk = pk.replace("\\\\n", "\n")
+            # Handle both escaped and literal newlines
+            pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
+            if not pk.startswith("-----BEGIN"):
+                pk = "-----BEGIN PRIVATE KEY-----\n" + pk
+            if not pk.endswith("-----END PRIVATE KEY-----"):
+                pk = pk + "\n-----END PRIVATE KEY-----"
             data["private_key"] = pk.strip()
 
         return data
@@ -505,7 +509,8 @@ def check_available_slots(preferred_day):
             available_slots.append(slot_str)
 
     # 4. Filter past slots if today & detect urgent slots
-    now_dt   = datetime.now()
+    # Use IST (UTC+5:30) for comparison if server is in UTC
+    now_dt = datetime.utcnow() + timedelta(hours=5, minutes=30)
     is_today = (day == now_dt.strftime("%A"))
 
     if is_today:

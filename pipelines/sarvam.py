@@ -534,7 +534,7 @@ async def sarvam_handler(request):
                     "media": {"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": silence_b64},
                 }))
                 # Keep Deepgram alive
-                if dg_ws and not dg_ws.closed:
+                if dg_ws:
                     try:
                         await dg_ws.send(silence_mulaw)
                     except Exception:
