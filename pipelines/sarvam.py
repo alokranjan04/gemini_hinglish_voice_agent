@@ -22,7 +22,7 @@ from config.settings import (
     SARVAM_CHAT_URL, SARVAM_TTS_URL, DG_URL,
 )
 from core.recorder import _TimelineRecorder
-from core.hindi_utils import JUNK_RE, SENT_RE, day_to_hindi, time_to_hindi, _HI_DAY
+from core.hindi_utils import JUNK_RE, SENT_RE, day_to_hindi, time_to_hindi, hindi_to_time, _HI_DAY
 from pipelines.http_client import get_http
 from pharmacy_functions import FUNCTION_MAP, send_call_summary_email, APPOINTMENTS_DB
 from metrics.collector import store, resource_poller, TurnLatency
@@ -341,9 +341,23 @@ async def sarvam_handler(request):
                         if not args.get("preferred_day"):  args["preferred_day"]  = "Today"
                         args.update({"patient_age": "5", "parent_name": "Guardian",
                                      "contact_number": caller_id})
+                        # ── Override time with what user actually said ────────
+                        # The LLM sometimes picks the nearest slot (e.g. 06:10)
+                        # instead of correctly parsing "साढ़े छह" → 06:30.
+                        # hindi_to_time() does an exact parse of the transcript.
+                        _spoken_time = hindi_to_time(transcript)
+                        if _spoken_time and _spoken_time != args.get("preferred_time"):
+                            print(f"[TIME OVERRIDE] LLM={args['preferred_time']!r} → spoke={_spoken_time!r}")
+                            args["preferred_time"] = _spoken_time
                     elif fn in ("cancel_appointment", "reschedule_appointment"):
                         if not args.get("contact_number"):
                             args["contact_number"] = caller_id
+                        # ── Same guard for reschedule new_time ───────────────
+                        if fn == "reschedule_appointment":
+                            _spoken_time = hindi_to_time(transcript)
+                            if _spoken_time and _spoken_time != args.get("new_time"):
+                                print(f"[TIME OVERRIDE] reschedule LLM={args.get('new_time')!r} → spoke={_spoken_time!r}")
+                                args["new_time"] = _spoken_time
 
                     print(f"🔧 Tool: {fn}({args})")
                     t_tool = time.time()
@@ -351,6 +365,15 @@ async def sarvam_handler(request):
                     turn_tool_ms = int((time.time() - t_tool) * 1000)
                     if call_metrics:
                         call_metrics.record_tool_call(fn, args, res, turn_tool_ms)
+
+                    # ── Clear stale queue after any mutating action succeeds ──
+                    # A queued correction that was pending while this tool ran
+                    # is now obsolete — replaying it would double-cancel/rebook.
+                    if (fn in ("book_appointment", "reschedule_appointment", "cancel_appointment")
+                            and isinstance(res, dict) and res.get("success")):
+                        if pending_transcript:
+                            print(f"🗑  [QUEUE CLEARED] Discarding stale: {pending_transcript!r}")
+                        pending_transcript = None
 
                     if fn == "check_available_slots" and isinstance(res, dict):
                         slots_res = res

@@ -48,6 +48,11 @@ _HI_DAY = {
     "Sunday":   "रविवार",  "Today":    "आज",       "Tomorrow":  "कल",
 }
 
+# Inverse lookups used by hindi_to_time()
+_HI_HOUR_INV: dict[str, int] = {v: k for k, v in _HI_HOUR.items()}
+_HI_HOUR_INV.update({"पांच": 5})   # alternate spelling
+_HI_MIN_INV:  dict[str, int] = {v: k for k, v in _HI_MIN.items()}
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def day_to_hindi(day_str: str) -> str:
@@ -82,3 +87,100 @@ def time_to_hindi(time_str: str) -> str:
         return f"{period} के {_HI_HOUR[h12]} बजकर {min_hi} मिनट"
     except Exception:
         return time_str
+
+
+def hindi_to_time(text: str, default_period: str = "PM") -> str | None:
+    """
+    Parse a spoken Hindi/Hinglish time expression → 'HH:MM AM/PM'.
+
+    Handles:
+      साढ़े छह          → 06:30 PM
+      सवा सात           → 07:15 PM
+      पौने आठ           → 07:45 PM
+      छह बजे            → 06:00 PM
+      छह बजकर दस मिनट  → 06:10 PM
+      6:30              → 06:30 PM  (numeric fallback)
+
+    Returns None if no time pattern is found.
+    """
+    if not text:
+        return None
+
+    # ── Determine AM/PM from period keywords ────────────────────────────────
+    tl = text.lower()
+    if any(w in tl for w in ("सुबह", "subah", "morning", "savere")):
+        period = "AM"
+    elif any(w in tl for w in ("शाम", "sham", "evening", "रात", "night")):
+        period = "PM"
+    else:
+        period = default_period
+
+    def _hour(word: str) -> int | None:
+        w = word.strip().rstrip("।.")
+        if w.isdigit():
+            h = int(w)
+            return h if 1 <= h <= 12 else None
+        return _HI_HOUR_INV.get(w)
+
+    def _minute(word: str) -> int | None:
+        w = word.strip().rstrip("।.")
+        if w.isdigit():
+            m = int(w)
+            return m if 0 <= m < 60 else None
+        return _HI_MIN_INV.get(w)
+
+    def _fmt(h: int, m: int) -> str:
+        return f"{h:02d}:{m:02d} {period}"
+
+    # ── साढ़े X  (X hours 30 min) — MUST check before bare 'बजे' ───────────
+    m = re.search(r'साढ़े\s+(\S+)', text)
+    if m:
+        h = _hour(m.group(1))
+        if h:
+            return _fmt(h, 30)
+
+    # ── सवा X  (X hours 15 min) ─────────────────────────────────────────────
+    m = re.search(r'सवा\s+(\S+)', text)
+    if m:
+        h = _hour(m.group(1))
+        if h:
+            return _fmt(h, 15)
+
+    # ── पौने X  (X-1 hours 45 min) ──────────────────────────────────────────
+    m = re.search(r'पौने\s+(\S+)', text)
+    if m:
+        h = _hour(m.group(1))
+        if h and h > 1:
+            return _fmt(h - 1, 45)
+
+    # ── X बजकर Y मिनट ───────────────────────────────────────────────────────
+    m = re.search(r'(\S+)\s+बजकर\s+(\S+)\s+मिनट', text)
+    if m:
+        h = _hour(m.group(1))
+        mn = _minute(m.group(2))
+        if h is not None and mn is not None:
+            return _fmt(h, mn)
+
+    # ── X बज Y मिनट (alternate phrasing) ───────────────────────────────────
+    m = re.search(r'(\S+)\s+बज\s+(\S+)\s+मिनट', text)
+    if m:
+        h = _hour(m.group(1))
+        mn = _minute(m.group(2))
+        if h is not None and mn is not None:
+            return _fmt(h, mn)
+
+    # ── X बजे  (X:00) ───────────────────────────────────────────────────────
+    m = re.search(r'(\S+)\s+बजे', text)
+    if m:
+        h = _hour(m.group(1))
+        if h:
+            return _fmt(h, 0)
+
+    # ── Numeric HH:MM fallback ───────────────────────────────────────────────
+    m = re.search(r'\b(\d{1,2}):(\d{2})\b', text)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 1 <= h <= 12 and 0 <= mn < 60:
+            return _fmt(h, mn)
+
+    return None
