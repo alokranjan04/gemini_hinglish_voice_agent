@@ -94,27 +94,27 @@ def get_google_creds():
     if not data:
         return None
 
-    # 3. Aggressive Normalize (MUST run for both sources)
+    # 3. Aggressive Normalize & Rebuild
     pk = data.get("private_key", "")
     if pk:
         # Clean quotes and resolve escape sequences
         pk = pk.strip().strip("'").strip('"')
         pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
         
-        # Ensure proper headers
-        if "-----BEGIN PRIVATE KEY-----" not in pk:
-            pk = "-----BEGIN PRIVATE KEY-----\n" + pk
-        if "-----END PRIVATE KEY-----" not in pk:
-            pk = pk + "\n-----END PRIVATE KEY-----"
+        # Extract the body (everything between headers)
+        body = pk.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+        # Remove all whitespace, newlines, and non-base64 noise
+        body = "".join(body.split())
         
-        # Collapse double headers/footers
-        pk = pk.replace("-----BEGIN PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----")
-        pk = pk.replace("-----END PRIVATE KEY-----\n-----END PRIVATE KEY-----", "-----END PRIVATE KEY-----")
+        # Re-wrap to 64 character lines (Standard RSA Format)
+        wrapped_body = "\n".join(body[i:i+64] for i in range(0, len(body), 64))
         
-        data["private_key"] = pk.strip()
+        # Final reconstruction
+        final_pk = f"-----BEGIN PRIVATE KEY-----\n{wrapped_body}\n-----END PRIVATE KEY-----\n"
+        data["private_key"] = final_pk
         
         # Diagnostic
-        start = data["private_key"][:30].replace("\n", "\\n")
+        start = final_pk[:30].replace("\n", "\\n")
         print(f"[AUTH]: Loaded creds via {source}. Key starts: '{start}'...")
 
     return data

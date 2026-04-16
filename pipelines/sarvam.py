@@ -304,10 +304,17 @@ async def sarvam_handler(request):
                     )
                     fn_match = re.search(r"\b(book_appointment|check_available_slots)\b", full_text)
                     fn_name  = fn_match.group(1) if fn_match else None
-                    if xml_pairs and fn_name:
-                        extracted  = {k: v.strip() for k, v in xml_pairs}
-                        tool_calls = [{"id": "halluc_0", "type": "function",
-                                       "function": {"name": fn_name, "arguments": json.dumps(extracted)}}]
+                    # Fallback: if AI outputs raw JSON instead of XML tags
+                    if not xml_pairs and ("{" in full_text and "}" in full_text):
+                        try:
+                            json_body = full_text[full_text.find("{"):full_text.rfind("}")+1]
+                            extracted = json.loads(json_body)
+                            fn_name = fn_name or next((k for k in ["book_appointment", "check_available_slots", "cancel_appointment", "reschedule_appointment"] if k in full_text), None)
+                            if extracted and fn_name:
+                                tool_calls = [{"id": "halluc_json", "type": "function",
+                                               "function": {"name": fn_name, "arguments": json_body}}]
+                        except Exception:
+                            pass
                     full_text = ""
 
             asst: dict = {"role": "assistant", "content": full_text or None}
