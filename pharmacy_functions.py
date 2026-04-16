@@ -65,46 +65,59 @@ APPOINTMENTS_DB = {"appointments": {}, "next_id": 1}
 # Available slots now generated dynamically in check_available_slots()
 
 def get_google_creds():
-    """Load Google service account credentials. Tries env var first, then credentials file."""
-    # Try loading from google-credentials.json file first (most reliable)
+    """Load and normalize Google service account credentials."""
+    data = None
+    source = ""
+
+    # 1. Try file first
     creds_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google-credentials.json")
     if os.path.exists(creds_file):
         try:
             with open(creds_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                source = "google-credentials.json"
         except Exception as e:
             print(f"WARNING: Could not load google-credentials.json: {e}")
 
-    # Fall back to GOOGLE_CREDENTIALS env var
-    creds_json = os.getenv("GOOGLE_CREDENTIALS", "").strip()
-    if not creds_json:
+    # 2. Try env if file failed
+    if not data:
+        creds_json = os.getenv("GOOGLE_CREDENTIALS", "").strip()
+        if creds_json:
+            try:
+                if (creds_json.startswith("'") and creds_json.endswith("'")) or (creds_json.startswith('"') and creds_json.endswith('"')):
+                    creds_json = creds_json[1:-1]
+                data = json.loads(creds_json)
+                source = "ENVIRONMENT"
+            except Exception as e:
+                print(f"WARNING: Credential Parse Error: {e}")
+
+    if not data:
         return None
 
-    try:
-        if (creds_json.startswith("'") and creds_json.endswith("'")) or (creds_json.startswith('"') and creds_json.endswith('"')):
-            creds_json = creds_json[1:-1]
+    # 3. Aggressive Normalize (MUST run for both sources)
+    pk = data.get("private_key", "")
+    if pk:
+        # Clean quotes and resolve escape sequences
+        pk = pk.strip().strip("'").strip('"')
+        pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
+        
+        # Ensure proper headers
+        if "-----BEGIN PRIVATE KEY-----" not in pk:
+            pk = "-----BEGIN PRIVATE KEY-----\n" + pk
+        if "-----END PRIVATE KEY-----" not in pk:
+            pk = pk + "\n-----END PRIVATE KEY-----"
+        
+        # Collapse double headers/footers
+        pk = pk.replace("-----BEGIN PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----")
+        pk = pk.replace("-----END PRIVATE KEY-----\n-----END PRIVATE KEY-----", "-----END PRIVATE KEY-----")
+        
+        data["private_key"] = pk.strip()
+        
+        # Diagnostic
+        start = data["private_key"][:30].replace("\n", "\\n")
+        print(f"[AUTH]: Loaded creds via {source}. Key starts: '{start}'...")
 
-        data = json.loads(creds_json)
-
-        pk = data.get("private_key", "")
-        if pk:
-            # 1. Clean up potential wrap-around quotes or noise
-            pk = pk.strip().strip("'").strip('"')
-            # 2. Repair newlines (covers \n, \\n, and literal newlines)
-            pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
-            # 3. Ensure standard headers exist
-            if "-----BEGIN PRIVATE KEY-----" not in pk:
-                pk = "-----BEGIN PRIVATE KEY-----\n" + pk
-            if "-----END PRIVATE KEY-----" not in pk:
-                pk = pk + "\n-----END PRIVATE KEY-----"
-            # 4. Collapse any accidental double-headers
-            pk = pk.replace("-----BEGIN PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----")
-            data["private_key"] = pk.strip()
-
-        return data
-    except Exception as e:
-        print(f"WARNING: Credential Parse Error: {e}")
-        return None
+    return data
 
 def generate_ics(appt):
     """Generate a standard iCalendar (.ics) string."""
