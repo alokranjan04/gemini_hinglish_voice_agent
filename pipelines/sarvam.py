@@ -524,13 +524,21 @@ async def sarvam_handler(request):
     # ── Keep-alive silence packets ─────────────────────────────────────────
 
     async def vobiz_keep_alive():
-        silence = base64.b64encode(audioop.lin2ulaw(b"\x00" * 160, 2)).decode("utf-8")
+        silence_mulaw = audioop.lin2ulaw(b"\x00" * 160, 2)
+        silence_b64   = base64.b64encode(silence_mulaw).decode("utf-8")
         while not ws.closed:
             if sid:
+                # Keep Vobiz alive
                 await ws.send_str(json.dumps({
                     "event": "playAudio", "streamId": sid,
-                    "media": {"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": silence},
+                    "media": {"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": silence_b64},
                 }))
+                # Keep Deepgram alive
+                if dg_ws and not dg_ws.closed:
+                    try:
+                        await dg_ws.send(silence_mulaw)
+                    except Exception:
+                        pass
             await asyncio.sleep(0.8)
 
     # ── Deepgram receiver ─────────────────────────────────────────────────
@@ -586,8 +594,9 @@ async def sarvam_handler(request):
                         asyncio.create_task(handle_transcript(tr))
                     else:
                         partial_hyp = tr
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"❌ [DEEPGRAM ERROR] Receiver died: {e}")
+            traceback.print_exc()
 
     # ── Main WebSocket loop ────────────────────────────────────────────────
 
@@ -615,7 +624,8 @@ async def sarvam_handler(request):
                     await dg_ws.send(raw)
                     recorder.write_caller(audioop.ulaw2lin(raw, 2))
 
-    except Exception:
+    except Exception as e:
+        print(f"❌ [HANDLER CRASH] {e}")
         traceback.print_exc()
     finally:
         if poll_task:
@@ -627,6 +637,7 @@ async def sarvam_handler(request):
             except Exception:
                 pass
         if sid and call_metrics:
+            print(f"--- [SARVAM]: Finished {sid} | WS Closed: {ws.closed} ---")
             cost = calculate_cost(
                 "sarvam",
                 perf_counter() - call_metrics.call_start_perf,
