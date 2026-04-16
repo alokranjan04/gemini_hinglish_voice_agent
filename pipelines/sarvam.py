@@ -470,9 +470,11 @@ async def sarvam_handler(request):
                             f_buf = parts[-1]
                         elif kind == "tool":
                             followup_tools.append(val)
+
                     if f_buf.strip():
                         spoke_any = True
                         await flush_sent(f_buf)
+
                     turn_tts_ms = int((time.time() - t_tts) * 1000)
                     print(f"[FOLLOWUP] spoke={spoke_any} text={followup[:80]!r} "
                           f"tools={[t['function']['name'] for t in followup_tools]}")
@@ -488,42 +490,10 @@ async def sarvam_handler(request):
                     if call_metrics and followup:
                         call_metrics.record_turn("assistant", followup)
 
-                    # ── Name-correction rebook: cancel → rebook with new name
-                    last_fn = tool_calls[-1]["function"]["name"] if tool_calls else ""
-                    if last_fn == "cancel_appointment" and followup_tools:
-                        for ftc in followup_tools:
-                            if ftc["function"]["name"] == "book_appointment":
-                                fargs = json.loads(ftc["function"]["arguments"] or "{}")
-                                if not fargs.get("preferred_time"): fargs["preferred_time"] = "06:00 PM"
-                                if not fargs.get("preferred_day"):  fargs["preferred_day"]  = "Today"
-                                fargs.update({"patient_age": "5", "parent_name": "Guardian",
-                                              "contact_number": caller_id})
-                                print(f"🔧 [REBOOK] book_appointment({fargs})")
-                                fres = await asyncio.to_thread(
-                                    FUNCTION_MAP["book_appointment"], **fargs
-                                )
-                                history.append({
-                                    "role": "tool", "tool_call_id": ftc.get("id", "ft_0"),
-                                    "name": "book_appointment",
-                                    "content": json.dumps(fres, ensure_ascii=False),
-                                })
-                                if isinstance(fres, dict) and fres.get("success"):
-                                    conf_msg = fres.get("confirmation_message") or (
-                                        f"{day_to_hindi(fargs['preferred_day'])} "
-                                        f"{time_to_hindi(fargs['preferred_time'])} "
-                                        f"{fargs.get('patient_name', '')} का appointment "
-                                        "मैंने book कर दिया है। आप please 15 minutes पहले आ जाइए।"
-                                    )
-                                    await flush_sent(conf_msg)
-                                    history.append({"role": "assistant", "content": conf_msg})
-                                    if call_metrics:
-                                        call_metrics.record_turn("assistant", conf_msg)
-                                    spoke_any = True
-                                break
-
                     # ── Fallback: no speech produced after tool ───────────────
                     if not spoke_any:
                         last_res = json.loads(history[-2]["content"]) if len(history) >= 2 else {}
+                        last_fn = tool_calls[-1]["function"]["name"] if tool_calls else ""
                         if last_fn == "check_available_slots":
                             if last_res.get("urgent_message"):
                                 fb = last_res["urgent_message"]

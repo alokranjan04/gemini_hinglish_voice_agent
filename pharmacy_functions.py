@@ -235,7 +235,8 @@ def get_appointment_datetime(day_name, time_str):
     return target_date.replace(hour=time_dt.hour, minute=time_dt.minute, second=0, microsecond=0)
 
 def update_booking_sheet(patient_name, problems, parent_name, contact_number, booking_time, patient_age, booking_slot):
-    """Append a new row to the Google Sheets booking log.
+    """Upsert a row in the Google Sheets booking log.
+    If an active entry exists for the same patient or contact, update it instead of appending.
 
     Sheet column layout (A–H):
     A: Patient Name | B: Patient Problems | C: Parents Name
@@ -243,13 +244,12 @@ def update_booking_sheet(patient_name, problems, parent_name, contact_number, bo
     G: Booking Slot | H: Contact Number
     """
     try:
-        creds_data = get_google_creds()
-        if not creds_data: return {"error": "Credentials missing"}
+        service, spreadsheet_id = _get_sheets_service()
+        if not service: return {"error": "Credentials missing"}
 
-        scopes = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = service_account.Credentials.from_service_account_info(creds_data, scopes=scopes)
-        service = build('sheets', 'v4', credentials=creds)
-
+        # Search for existing active rows
+        existing_rows = _find_sheet_rows(patient_name, contact_number)
+        
         values = [[
             patient_name,    # A: Patient Name
             problems,        # B: Patient Problems
@@ -261,15 +261,29 @@ def update_booking_sheet(patient_name, problems, parent_name, contact_number, bo
             contact_number,  # H: Contact Number
         ]]
 
-        result = service.spreadsheets().values().append(
-            spreadsheetId=SPREADSHEET_ID,
-            range="Sheet1!A2",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={'values': values}
-        ).execute()
+        if existing_rows:
+            # Update the most recent matching row
+            row_idx, _ = existing_rows[-1]
+            print(f"[SHEETS]: Updating existing row {row_idx} for {patient_name} ({contact_number})")
+            result = service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"Sheet1!A{row_idx}:H{row_idx}",
+                valueInputOption="RAW",
+                body={'values': values}
+            ).execute()
+            return {"success": True, "updated": 1, "action": "update", "row_index": row_idx}
+        else:
+            # Append new row
+            print(f"[SHEETS]: Appending new row for {patient_name} ({contact_number})")
+            result = service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range="Sheet1!A2",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={'values': values}
+            ).execute()
+            return {"success": True, "updated": result.get('updates', {}).get('updatedCells'), "action": "append"}
 
-        return {"success": True, "updated": result.get('updates', {}).get('updatedCells')}
     except Exception as e:
         print(f"SHEETS ERROR: {e}")
         return {"error": str(e)}
@@ -344,6 +358,15 @@ def book_appointment(patient_name, patient_age, parent_name, contact_number, pre
     # Reserve the slot immediately so any concurrent check_available_slots call
     # sees it as taken before the Google APIs finish.
     APPOINTMENTS_DB["appointments"][appt_id] = appt
+
+    # ── UPDATE CHECK: If patient/number exists, clean up old calendar events ──
+    try:
+        existing = _find_sheet_rows(patient_name, contact_number)
+        if existing:
+            print(f"[BOOKING UPDATE]: Existing entry found. Cleaning up old calendar events.")
+            _delete_calendar_events(patient_name)
+    except Exception as e:
+        print(f"[UPDATE CHECK ERROR]: {e}")
 
     # Run Sheets + Calendar + Email concurrently to cut booking time ~3x
     booking_time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -668,29 +691,28 @@ def reschedule_appointment(patient_name, contact_number, new_day, new_time):
     """Reschedule an existing appointment to a new day and time."""
     print(f"\n[DIGITAL_LOG]: Rescheduling appointment for {patient_name} to {new_day} {new_time}...")
     try:
-        # Get old appointment details from sheet
+        # Check if appointment exists
         rows = _find_sheet_rows(patient_name, contact_number)
         if not rows:
             return {"success": False, "message": f"Koi appointment nahi mili '{patient_name}' ke liye."}
 
         _, old_row = rows[0]
         reason = old_row[1] if len(old_row) > 1 else "Reschedule"
+        age = old_row[5] if len(old_row) > 5 else "5"
+        parent = old_row[2] if len(old_row) > 2 else "Guardian"
 
-        # Cancel old
-        cancel_appointment(patient_name, contact_number)
-
-        # Book new
+        # book_appointment will now handle UPSERT in sheets and replacement in calendar
         result = book_appointment(
             patient_name=patient_name,
-            patient_age="",
-            parent_name=patient_name,
+            patient_age=age,
+            parent_name=parent,
             contact_number=contact_number,
             preferred_day=new_day,
             preferred_time=new_time,
             reason=reason
         )
         if result.get("success"):
-            return {"success": True, "message": f"{patient_name} ki appointment reschedule ho gayi! {new_day} ko {new_time} baje."}
+            return {"success": True, "message": f"{patient_name} ki appointment reschedule ho gayi! {new_day} को {new_time} बजे।"}
         return result
     except Exception as e:
         print(f"RESCHEDULE ERROR: {e}")
