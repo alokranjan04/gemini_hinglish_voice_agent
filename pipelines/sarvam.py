@@ -563,7 +563,7 @@ async def sarvam_handler(request):
     # ── Deepgram receiver ─────────────────────────────────────────────────
 
     async def dg_receiver():
-        nonlocal partial_hyp, speak_task
+        nonlocal partial_hyp, speak_task, is_responding
         try:
             async for raw in dg_ws:
                 d        = json.loads(raw)
