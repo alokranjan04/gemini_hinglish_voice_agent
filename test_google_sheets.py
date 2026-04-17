@@ -7,7 +7,7 @@ from googleapiclient.discovery import build
 def test_sheets():
     print("--- GOOGLE SHEETS DIAGNOSTIC ---")
     creds_file = 'google-credentials.json'
-    spreadsheet_id = "1T5FLtmFUu0-VWpa8KT_c3BP8BcDKjZuco3tHDeDRbyo"
+    spreadsheet_id = "1NWx5XXBokgbqS_Rou0VGu78B4e8OdntXNZvYCGYiZcU"
     
     if not os.path.exists(creds_file):
         print("ERROR: 'google-credentials.json' file is MISSING!")
@@ -21,9 +21,24 @@ def test_sheets():
         print(f"1. Checking Service Account Email: {email}")
         print(f"   IMPORTANT: Make sure YOUR SHEET is shared with this email as EDITOR.")
         
-        # Format the key correctly
-        key = creds_data.get("private_key", "").replace("\\n", "\n").strip()
-        creds_data["private_key"] = key
+        # Robust Normalize & Rebuild (Matches pharmacy_functions.py logic)
+        pk = creds_data.get("private_key", "")
+        if pk:
+            # Clean quotes and resolve escape sequences
+            pk = pk.strip().strip("'").strip('"')
+            pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
+            
+            # Extract the body (everything between headers)
+            body = pk.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+            # Remove all whitespace, newlines, and non-base64 noise
+            body = "".join(body.split())
+            
+            # Re-wrap to 64 character lines (Standard RSA Format)
+            wrapped_body = "\n".join(body[i:i+64] for i in range(0, len(body), 64))
+            
+            # Final reconstruction
+            final_pk = f"-----BEGIN PRIVATE KEY-----\n{wrapped_body}\n-----END PRIVATE KEY-----\n"
+            creds_data["private_key"] = final_pk
         
         scopes = ['https://www.googleapis.com/auth/spreadsheets']
         creds = service_account.Credentials.from_service_account_info(creds_data, scopes=scopes)
