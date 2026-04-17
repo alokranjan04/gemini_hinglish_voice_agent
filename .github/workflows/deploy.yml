@@ -43,12 +43,8 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          # Convert IMAGE_NAME to lowercase to avoid Docker naming errors
-          LOWER_IMAGE_NAME=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          docker build -t $LOWER_IMAGE_NAME:latest .
-          docker push $LOWER_IMAGE_NAME:latest
-          # Store the lowercase name for the next step
-          echo "IMAGE_NAME_LOWER=$LOWER_IMAGE_NAME" >> $GITHUB_ENV
+          docker build -t us-central1-docker.pkg.dev/testcnx-169610/priya-repo/priya-agent:latest .
+          docker push us-central1-docker.pkg.dev/testcnx-169610/priya-repo/priya-agent:latest
 
       - name: Deploy to GCE via SSH
         uses: appleboy/ssh-action@master
@@ -57,21 +53,18 @@ jobs:
           username: deploy-agent
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Ensure the image name is strictly lowercase and trimmed
-            RAW_IMAGE_NAME="${{ env.IMAGE_NAME }}"
-            IMAGE_NAME_LOWER=$(echo "$RAW_IMAGE_NAME" | tr '[:upper:]' '[:lower:]' | xargs)
-            
-            # Authenticate Docker
-            gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+            # Authenticate 
+            gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
             
             # Cleanup space
             docker system prune -f
             
-            # Pull and Run
-            docker pull $IMAGE_NAME_LOWER:latest
-            docker stop ${{ env.SERVICE_NAME }} || true
-            docker rm ${{ env.SERVICE_NAME }} || true
+            # Pull and Update
+            docker pull us-central1-docker.pkg.dev/testcnx-169610/priya-repo/priya-agent:latest
+            docker stop priya-agent || true
+            docker rm priya-agent || true
             
-            docker run -d --name ${{ env.SERVICE_NAME }} --restart always -p 5050:5050 -e SARVAM_API_KEY="${{ secrets.SARVAM_API_KEY }}" -e DEEPGRAM_API_KEY="${{ secrets.DEEPGRAM_API_KEY }}" -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" -e GOOGLE_SPREADSHEET_ID="${{ secrets.GOOGLE_SPREADSHEET_ID }}" -e GOOGLE_CALENDAR_ID="${{ secrets.GOOGLE_CALENDAR_ID }}" -e GMAIL_USER="${{ secrets.GMAIL_USER }}" -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' $IMAGE_NAME_LOWER:latest
+            # The Final Run
+            docker run -d --name priya-agent --restart always -p 5050:5050 -e SARVAM_API_KEY="${{ secrets.SARVAM_API_KEY }}" -e DEEPGRAM_API_KEY="${{ secrets.DEEPGRAM_API_KEY }}" -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" -e GOOGLE_SPREADSHEET_ID="${{ secrets.GOOGLE_SPREADSHEET_ID }}" -e GOOGLE_CALENDAR_ID="${{ secrets.GOOGLE_CALENDAR_ID }}" -e GMAIL_USER="${{ secrets.GMAIL_USER }}" -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' us-central1-docker.pkg.dev/testcnx-169610/priya-repo/priya-agent:latest
             
             docker image prune -f
