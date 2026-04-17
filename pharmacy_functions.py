@@ -207,25 +207,39 @@ def _normalize_day(day_name: str) -> str:
 def _normalize_time(time_str: str) -> str:
     """Normalise time string: Devanagari digits → ASCII, handle missing AM/PM."""
     deva_map = str.maketrans("०१२३४५६७८९", "0123456789")
-    t = time_str.translate(deva_map).strip()
+    t = time_str.translate(deva_map).strip().upper()
+    
     # If no AM/PM, try to infer from hour
-    if "AM" not in t.upper() and "PM" not in t.upper():
+    if "AM" not in t and "PM" not in t:
         try:
-            hour = int(t.split(":")[0])
-            t += " AM" if 6 <= hour < 12 else " PM"
+            # Handle HH:MM or just HH
+            hour_part = t.split(":")[0]
+            # Strip any non-numeric noise
+            hour_part = "".join(filter(str.isdigit, hour_part))
+            hour = int(hour_part)
+            
+            # Clinic logic: 10-12 is always AM, 6-8 is always PM
+            if 6 <= hour < 12:
+                t += " AM"
+            else:
+                t += " PM"
         except Exception:
             t += " AM"
-    return t.upper().replace(".", "").strip()
+    return t.replace(".", "").strip()
 
 def get_appointment_datetime(day_name, time_str):
-    """Convert day name and time string to a datetime object for the upcoming week."""
+    """Convert day name and time string to a datetime object for the upcoming week.
+    Always uses IST (UTC+5:30) for the base 'now' reference.
+    """
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     resolved_day  = _normalize_day(day_name)
     resolved_time = _normalize_time(time_str)
 
     target_day  = days.index(resolved_day)
-    current_dt  = datetime.now()
+    # Ensure we use IST even if the server is in UTC
+    current_dt  = datetime.utcnow() + timedelta(hours=5, minutes=30)
     current_day = current_dt.weekday()
+    
     days_ahead  = target_day - current_day
     if days_ahead < 0:
         days_ahead += 7
@@ -329,7 +343,9 @@ def book_appointment(patient_name, patient_age, parent_name, contact_number, pre
     # ── PAST-TIME GUARD: reject bookings for times that have already passed ──
     try:
         appt_dt = get_appointment_datetime(preferred_day, preferred_time)
-        if appt_dt <= datetime.now():
+        # Ensure 'now' is in IST for comparison
+        ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        if appt_dt <= ist_now:
             msg = (f"यह समय ({preferred_time} on {preferred_day}) बीत चुका है। "
                    "कोई और समय चुनें।")
             print(f"[PAST-TIME BLOCK]: {msg}")
@@ -386,16 +402,23 @@ def book_appointment(patient_name, patient_age, parent_name, contact_number, pre
     sheet_res = fut_sheet.result() if not fut_sheet.exception() else {"error": str(fut_sheet.exception())}
     cal_res   = fut_cal.result()   if not fut_cal.exception()   else {"error": str(fut_cal.exception())}
 
-    if "error" in sheet_res or "error" in cal_res:
-        # Roll back the in-memory reservation so the slot stays open for retry
+    # If SHEET succeeded, we count it as a success for the user/agent flow
+    # even if Calendar or Email had a secondary error. 
+    # We report the secondary error in the logs.
+    if "error" in sheet_res:
+        # Roll back the in-memory reservation if the primary record failed
         APPOINTMENTS_DB["appointments"].pop(appt_id, None)
         return {
             "success": False,
-            "message": "BOOKING_PARTIAL_FAILURE: Sheet/Calendar update failed. Check terminal.",
-            "sheets_status": sheet_res.get("error", "OK"),
+            "message": "BOOKING_FAILED: Sheet update failed.",
+            "sheets_status": sheet_res.get("error"),
             "calendar_status": cal_res.get("error", "OK"),
         }
 
+    # If we are here, Sheets logic passed!
+    if "error" in cal_res:
+         print(f"⚠️  MINOR CALENDAR SYNC ERROR: {cal_res['error']}")
+    
     day_hi  = _day_to_hindi(preferred_day)
     time_hi = _time_to_hindi(preferred_time)
     confirmation_message = (
