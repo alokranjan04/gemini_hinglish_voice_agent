@@ -323,13 +323,11 @@ GEMINI_API_KEY=your_gemini_key
 
 # Google integrations (both pipelines)
 GOOGLE_CALENDAR_ID=your_calendar_id@gmail.com
-GOOGLE_SPREADSHEET_ID=your_sheet_id
+GOOGLE_SPREADSHEET_ID=1NWx5XXBokgbqS_Rou0VGu78B4e8OdntXNZvYCGYiZcU
 
-# Option A — credentials file (recommended)
-# Save as google-credentials.json in project root
-
-# Option B — inline JSON in env var
-GOOGLE_CREDENTIALS={"type":"service_account","project_id":"...","private_key":"..."}
+# Google Credentials (Base64 or Inline JSON)
+# Used by the container to rebuild google-credentials.json at startup
+GOOGLE_CREDENTIALS={"type":"service_account","project_id":"testcnx-169610",...}
 
 # Email (Gmail SMTP)
 GMAIL_USER=your@gmail.com
@@ -361,16 +359,35 @@ python app.py
 
 Dashboard at `http://localhost:5050/`
 
-### 8. Expose via ngrok (for Vobiz)
+## Production Deployment (Google Cloud GCE + Docker)
 
-```bash
-ngrok http 5050
-```
+The agent is designed to run on a **GCE Instance** (Ubuntu 22.04) using **Docker**. Deployment is fully automated via GitHub Actions.
 
+### 1. VM Setup
+1. Create a GCE instance (e.g., `e2-medium`).
+2. Install Docker and GCloud SDK.
+3. Configure Docker to authenticate with Artifact Registry.
+
+### 2. GitHub Actions Setup
+Configure these **Secrets** in your GitHub repository:
+- `GCP_PROJECT_ID`: `testcnx-169610`
+- `GCE_INSTANCE_IP`: `34.122.77.178`
+- `GCP_SA_KEY`: Your service account JSON key.
+- `SSH_PRIVATE_KEY`: Private key for SSH access to the VM.
+- `SARVAM_API_KEY`, `DEEPGRAM_API_KEY`, `GEMINI_API_KEY`, etc.
+
+### 3. Automated Deployment
+Any push to the `main` branch triggers the following:
+1. **Build**: Creates a secure, non-root Docker image.
+2. **Push**: Uploads the image to `us-central1-docker.pkg.dev`.
+3. **Deploy**: SSH into GCE, prunes old images, pulls the latest, and restarts the container with fresh environment variables.
+
+### 4. Vobiz Integration
 Set Vobiz **Answer URL** to:
 ```
-https://your-ngrok-url.ngrok-free.app/answer
+http://34.122.77.178:5050/answer
 ```
+*(Note: Use `http` and `ws` unless you have configured SSL/WSS on the VM.)*
 
 ---
 

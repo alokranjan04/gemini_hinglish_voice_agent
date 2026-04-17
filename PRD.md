@@ -268,12 +268,13 @@ If any of these are triggered:
 
 ## 11. Deployment
 
-### Cloud Run (primary)
+### Google Compute Engine (Production)
 
-- Region: `asia-south1` (Mumbai)
-- min-instances: 1 (no cold starts)
-- Auto-scales to 10 instances under load
-- CI/CD: GitHub Actions → Artifact Registry → Cloud Run on every push to `main`
+- Region: `us-central1` (Iowa)
+- Instance: GCE Ubuntu 22.04 LTS
+- Format: Dockerized Container (Running as `priya` non-root)
+- CI/CD: GitHub Actions → Artifact Registry → GCE SSH Auto-deploy on every push to `main`
+- Persistence: Google Sheets & Calendar (Real-time sync)
 
 ### VPS / Self-Hosted
 

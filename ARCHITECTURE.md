@@ -182,38 +182,29 @@ Each WebSocket connection runs in its own coroutine. Within a call:
 
 ## 10. Deployment
 
-### 10.1 Google Cloud Run (CI/CD)
+### 10.1 Google Compute Engine (Docker + CI/CD)
+
+The production environment resides on a **Google Compute Engine (GCE)** VM in `us-central1`.
 
 ```
 git push main
     → GitHub Actions (.github/workflows/deploy.yml)
-    → docker build (python:3.11-slim, non-root user)
-    → push to Artifact Registry (asia-south1-docker.pkg.dev)
-    → gcloud run deploy priya-agent
-        --region=asia-south1
-        --min-instances=1        # no cold starts
-        --max-instances=10
-        --memory=512Mi
-        --timeout=3600           # WebSocket calls up to 1 hour
-        --session-affinity       # sticky routing for WebSocket
-        --set-secrets GOOGLE_CREDENTIALS=google-credentials:latest
-        --env-vars-file /tmp/env-vars.yaml   # handles GMAIL_APP_PASSWORD with spaces
+    → Docker Build (Multi-stage, python:3.11-slim, User=priya)
+    → Push to Google Artifact Registry (us-central1-docker.pkg.dev)
+    → SSH into GCE Instance (34.122.77.178)
+    → Docker Prune (Cleanup) → Pull Image → Restart Container
 ```
 
-**Secrets:** All API keys in GitHub Secrets → Cloud Run env vars. `google-credentials.json` in GCP Secret Manager, mounted at runtime.
+**Key Deployment Features:**
+- **Zero-Manual Updates**: All updates are atomic and automated via `git push`.
+- **Space Management**: Pre-emptive `docker system prune` on every deployment to prevent disk exhaustion.
+- **Port Mapping**: Docker maps host `5050` to container `5050`.
+- **Networking**: Binds to `0.0.0.0` to allow Vobiz traffic via the VM's external IP.
 
-### 10.2 VPS / Self-Hosted (`deploy/`)
-
-For bare-metal or VPS deployments (Ubuntu 22.04):
-
-| File | Purpose |
-|------|---------|
-| `deploy/setup.sh` | One-time setup: apt packages, ufw, nginx, certbot SSL, systemd |
-| `deploy/update.sh` | Rolling update: `git pull` + `pip install` + `systemctl restart` |
-| `deploy/nginx.conf` | Reverse proxy: rate-limit on `/answer`, WebSocket upgrade for streams, 3600s timeout |
-| `deploy/priya.service` | systemd unit: `User=priya`, `EnvironmentFile`, `Restart=always`, `MemoryMax=1G` |
-
-nginx handles TLS termination (Let's Encrypt) and proxies to `127.0.0.1:5050`.
+### 10.2 CI/CD Stack
+- **Runner**: GitHub-hosted Ubuntu runner.
+- **Auth**: `google-github-actions/auth` for registry access.
+- **SSH**: `appleboy/ssh-action` for remote execution on GCE.
 
 ---
 
