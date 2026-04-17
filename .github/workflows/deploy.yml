@@ -57,37 +57,21 @@ jobs:
           username: deploy-agent
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Calculate lowercase image name directly on the VM
-            IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+            # Ensure the image name is strictly lowercase and trimmed
+            RAW_IMAGE_NAME="${{ env.IMAGE_NAME }}"
+            IMAGE_NAME_LOWER=$(echo "$RAW_IMAGE_NAME" | tr '[:upper:]' '[:lower:]' | xargs)
             
-            # Authenticate Docker on the VM
+            # Authenticate Docker
             gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
             
-            # Pre-emptive cleanup to save space
+            # Cleanup space
             docker system prune -f
             
-            # Pull the latest image
+            # Pull and Run
             docker pull $IMAGE_NAME_LOWER:latest
-            
-            # Stop any existing container
             docker stop ${{ env.SERVICE_NAME }} || true
             docker rm ${{ env.SERVICE_NAME }} || true
             
-            # Start the new container with all secrets passed as environment variables
-            docker run -d \
-              --name ${{ env.SERVICE_NAME }} \
-              --restart always \
-              -p 5050:5050 \
-              -e SARVAM_API_KEY="${{ secrets.SARVAM_API_KEY }}" \
-              -e DEEPGRAM_API_KEY="${{ secrets.DEEPGRAM_API_KEY }}" \
-              -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
-              -e GOOGLE_SPREADSHEET_ID="${{ secrets.GOOGLE_SPREADSHEET_ID }}" \
-              -e GOOGLE_CALENDAR_ID="${{ secrets.GOOGLE_CALENDAR_ID }}" \
-              -e GMAIL_USER="${{ secrets.GMAIL_USER }}" \
-              -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" \
-              -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" \
-              -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' \
-              $IMAGE_NAME_LOWER:latest
+            docker run -d --name ${{ env.SERVICE_NAME }} --restart always -p 5050:5050 -e SARVAM_API_KEY="${{ secrets.SARVAM_API_KEY }}" -e DEEPGRAM_API_KEY="${{ secrets.DEEPGRAM_API_KEY }}" -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" -e GOOGLE_SPREADSHEET_ID="${{ secrets.GOOGLE_SPREADSHEET_ID }}" -e GOOGLE_CALENDAR_ID="${{ secrets.GOOGLE_CALENDAR_ID }}" -e GMAIL_USER="${{ secrets.GMAIL_USER }}" -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' $IMAGE_NAME_LOWER:latest
             
-            # Cleanup old images
             docker image prune -f
