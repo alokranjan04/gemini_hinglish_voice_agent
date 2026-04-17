@@ -28,11 +28,8 @@ COPY pipelines/  ./pipelines/
 COPY routes/     ./routes/
 COPY metrics/    ./metrics/
 
-# Runtime directories — Cloud Run filesystem is ephemeral but we still need them
-RUN mkdir -p recordings
-
-# Cloud Run injects PORT; default to 5050 for local runs
-ENV PORT=5050
+# Runtime directories
+RUN mkdir -p recordings metrics && chown -R 1000:1000 /app
 
 # Run as non-root
 RUN useradd -m -u 1000 priya
