@@ -10,7 +10,7 @@ Business logic lives in:
   routes/     — webhook, dashboard, metrics
 Prompts and tool schemas are in app_config.json.
 """
-import asyncio, sys
+import asyncio, sys, os, json
 from aiohttp import web
 
 from config.settings import APP_CONFIG, PORT
@@ -25,6 +25,18 @@ if sys.platform == "win32":
 
 
 async def main():
+    # ── Reconstruct Google Credentials from Environment ───────────────────
+    creds_json = os.getenv("GOOGLE_CREDENTIALS")
+    if creds_json:
+        try:
+            # Simple check if it's valid JSON
+            json_data = json.loads(creds_json)
+            with open("google-credentials.json", "w", encoding="utf-8") as f:
+                json.dump(json_data, f, indent=2)
+            print("💎 Google Credentials reconstructed from environment.")
+        except Exception as e:
+            print(f"⚠️  Failed to reconstruct GOOGLE_CREDENTIALS: {e}")
+
     app = web.Application()
 
     app.router.add_get( "/",                  home_page)
