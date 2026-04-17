@@ -48,10 +48,21 @@ jobs:
 
       - name: Deploy to GCE via SSH
         uses: appleboy/ssh-action@master
+        env:
+          SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          DOCTOR_EMAIL: ${{ secrets.DOCTOR_EMAIL }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         with:
           host: ${{ secrets.GCE_INSTANCE_IP }}
           username: deploy-agent
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: SARVAM_API_KEY,DEEPGRAM_API_KEY,GEMINI_API_KEY,GOOGLE_SPREADSHEET_ID,GOOGLE_CALENDAR_ID,GMAIL_USER,GMAIL_APP_PASSWORD,DOCTOR_EMAIL,GCP_SA_KEY
           script: |
             # Authenticate 
             gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
@@ -64,7 +75,20 @@ jobs:
             docker stop priya-agent || true
             docker rm priya-agent || true
             
-            # The Final Run
-            docker run -d --name priya-agent --restart always -p 5050:5050 -e SARVAM_API_KEY="${{ secrets.SARVAM_API_KEY }}" -e DEEPGRAM_API_KEY="${{ secrets.DEEPGRAM_API_KEY }}" -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" -e GOOGLE_SPREADSHEET_ID="${{ secrets.GOOGLE_SPREADSHEET_ID }}" -e GOOGLE_CALENDAR_ID="${{ secrets.GOOGLE_CALENDAR_ID }}" -e GMAIL_USER="${{ secrets.GMAIL_USER }}" -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' us-central1-docker.pkg.dev/testcnx-169610/priya-repo/priya-agent:latest
+            # Start the container using the environment variables passed from GHA
+            docker run -d \
+              --name priya-agent \
+              --restart always \
+              -p 5050:5050 \
+              -e SARVAM_API_KEY="$SARVAM_API_KEY" \
+              -e DEEPGRAM_API_KEY="$DEEPGRAM_API_KEY" \
+              -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+              -e GOOGLE_SPREADSHEET_ID="$GOOGLE_SPREADSHEET_ID" \
+              -e GOOGLE_CALENDAR_ID="$GOOGLE_CALENDAR_ID" \
+              -e GMAIL_USER="$GMAIL_USER" \
+              -e GMAIL_APP_PASSWORD="$GMAIL_APP_PASSWORD" \
+              -e DOCTOR_EMAIL="$DOCTOR_EMAIL" \
+              -e GOOGLE_CREDENTIALS="$GCP_SA_KEY" \
+              us-central1-docker.pkg.dev/testcnx-169610/priya-repo/priya-agent:latest
             
             docker image prune -f
