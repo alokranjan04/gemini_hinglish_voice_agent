@@ -57,6 +57,9 @@ jobs:
           username: deploy-agent
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # Calculate lowercase image name directly on the VM
+            IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+            
             # Authenticate Docker on the VM
             gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
             
@@ -64,7 +67,7 @@ jobs:
             docker system prune -f
             
             # Pull the latest image
-            docker pull ${{ env.IMAGE_NAME_LOWER }}:latest
+            docker pull $IMAGE_NAME_LOWER:latest
             
             # Stop any existing container
             docker stop ${{ env.SERVICE_NAME }} || true
@@ -84,7 +87,7 @@ jobs:
               -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" \
               -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" \
               -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' \
-              ${{ env.IMAGE_NAME_LOWER }}:latest
+              $IMAGE_NAME_LOWER:latest
             
             # Cleanup old images
             docker image prune -f
