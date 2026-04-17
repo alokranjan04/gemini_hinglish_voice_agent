@@ -43,8 +43,12 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          docker build -t ${{ env.IMAGE_NAME }}:latest .
-          docker push ${{ env.IMAGE_NAME }}:latest
+          # Convert IMAGE_NAME to lowercase to avoid Docker naming errors
+          LOWER_IMAGE_NAME=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          docker build -t $LOWER_IMAGE_NAME:latest .
+          docker push $LOWER_IMAGE_NAME:latest
+          # Store the lowercase name for the next step
+          echo "IMAGE_NAME_LOWER=$LOWER_IMAGE_NAME" >> $GITHUB_ENV
 
       - name: Deploy to GCE via SSH
         uses: appleboy/ssh-action@master
@@ -56,8 +60,11 @@ jobs:
             # Authenticate Docker on the VM
             gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
             
+            # Pre-emptive cleanup to save space
+            docker system prune -f
+            
             # Pull the latest image
-            docker pull ${{ env.IMAGE_NAME }}:latest
+            docker pull ${{ env.IMAGE_NAME_LOWER }}:latest
             
             # Stop any existing container
             docker stop ${{ env.SERVICE_NAME }} || true
@@ -77,7 +84,7 @@ jobs:
               -e GMAIL_APP_PASSWORD="${{ secrets.GMAIL_APP_PASSWORD }}" \
               -e DOCTOR_EMAIL="${{ secrets.DOCTOR_EMAIL }}" \
               -e GOOGLE_CREDENTIALS='${{ secrets.GCP_SA_KEY }}' \
-              ${{ env.IMAGE_NAME }}:latest
+              ${{ env.IMAGE_NAME_LOWER }}:latest
             
-            # Cleanup old images to save space
+            # Cleanup old images
             docker image prune -f
