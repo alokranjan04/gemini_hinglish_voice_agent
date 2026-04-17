@@ -269,10 +269,17 @@ async def sarvam_handler(request):
                 nonlocal speak_task
                 s = s.strip()
                 if s:
+                    # FIRE-AND-FORGET: Don't 'await' the speak_task in the loop.
+                    # This lets the next sentence start TTS generation immediately!
                     speak_task = asyncio.create_task(speak(s))
-                    await speak_task
 
             async for kind, val in _sarvam_stream(history):
+                # ── BARGE-IN CHECK ──
+                # If the user started speaking while LLM was thinking, abort immediately
+                if not is_responding:
+                    print("🛑 [LLM ABORT] User interrupted thinking")
+                    return
+
                 if kind == "text":
                     full_text += val
                     sent_buf  += val
@@ -281,6 +288,9 @@ async def sarvam_handler(request):
                         await flush_sent(p)
                     sent_buf = parts[-1]
                 elif kind == "tool":
+                    # Tool calls need to wait for previous speech to finish
+                    if speak_task and not speak_task.done():
+                        await speak_task 
                     tool_calls.append(val)
 
             if sent_buf.strip() and not tool_calls:
@@ -583,26 +593,33 @@ async def sarvam_handler(request):
                          .get("confidence"))
                 if conf is not None and call_metrics:
                     call_metrics.deepgram_confidences.append(round(conf * 100, 1))
-                if conf is not None and conf < 0.55:
-                    print(f"⚡ [LOW-CONF] Dropped ({conf:.2f}): {tr!r}")
+                
+                # REJECT noise: Fan noise usually has low confidence.
+                if conf is not None and conf < 0.65:
+                    if len(tr.split()) < 2:
+                        continue # ignore low-conf single-word noise
+                
+                # REJECT junk: 'हूँ', 'अह', 'जी?' as single words shouldn't interrupt
+                if len(tr.split()) == 1 and JUNK_RE.match(tr):
                     continue
 
                 if not d.get("is_final", False):
                     partial_hyp = tr
                     print(f"\r〰  {tr}          ", end="", flush=True)
-                    if (is_speaking and speak_task and not speak_task.done()
-                            and len(tr.split()) >= 2):
-                        print(f"\n🚫 [BARGE-IN] Cancelling bot speech")
+                    # AGGRESSIVE INTERRUPT: user just needs 2 words to stop the bot!
+                    if (is_speaking or is_responding) and len(tr.split()) >= 2:
+                        print(f"\n🚫 [BARGE-IN] User detected: {tr!r}")
+                        is_responding = False # Stops the LLM loop
                         if call_metrics:
                             call_metrics.record_interruption()
-                        speak_task.cancel()
+                        if speak_task and not speak_task.done():
+                            speak_task.cancel()
                         asyncio.create_task(clear_audio())
                 else:
-                    if len(tr.split()) >= 4:
+                    # Final transcript: trigger new intent
+                    if len(tr.split()) >= 1:
                         partial_hyp = ""
                         asyncio.create_task(handle_transcript(tr))
-                    else:
-                        partial_hyp = tr
         except Exception as e:
             print(f"❌ [DEEPGRAM ERROR] Receiver died: {e}")
             traceback.print_exc()

@@ -488,12 +488,26 @@ def send_call_summary_email(summary, transcript):
         sender_name="Priya Assistant",
     )
 
+from functools import lru_cache
+import time
+
+_AVAILABLE_SLOTS_CACHE = {}
+
 def check_available_slots(preferred_day):
-    """Dynamically generate available 10-minute slots within clinic windows, avoiding conflicts."""
+    """Dynamically generate available 10-minute slots with a 30-second cache."""
     try:
         day = _normalize_day(preferred_day)
     except Exception:
         day = preferred_day.strip().capitalize()
+    
+    # ── CACHE CHECK ──
+    now_time = time.time()
+    cache_key = day
+    if cache_key in _AVAILABLE_SLOTS_CACHE:
+        entry = _AVAILABLE_SLOTS_CACHE[cache_key]
+        if now_time - entry["timestamp"] < 30: # 30 second TTL
+            print(f"🚀 [CACHE HIT]: Serving slots for {day} from memory.")
+            return entry["data"]
 
     # If clinic is closed on Sunday, auto-redirect to Monday
     if day == "Sunday":
@@ -589,6 +603,12 @@ def check_available_slots(preferred_day):
         "day": day,
         "available_slots": available_slots[:20],
         "booked_slots": [t.strftime("%I:%M %p") for t in booked_times]
+    }
+
+    # ── CACHE UPDATE ──
+    _AVAILABLE_SLOTS_CACHE[cache_key] = {
+        "timestamp": time.time(),
+        "data": result
     }
 
     if is_today and available_slots:

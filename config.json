@@ -14,31 +14,24 @@
     "agent": {
         "listen": {
             "provider": {
-                "type": "deepgram",
-                "model": "nova-2",
-                "language": "hi"
-            }
+                "type": "deepgram"
+            },
+            "model": "nova-2",
+            "language": "hi",
+            "interruption_threshold": 100
         },
         "think": {
             "provider": {
-                "type": "open_ai",
-                "model": "gpt-4o"
+                "type": "open_ai"
             },
-            "endpoint": {
-                "url": "https://api.openai.com/v1/chat/completions",
-                "headers": {
-                    "Authorization": "Bearer OPENAI_KEY_PLACEHOLDER"
-                }
-            },
-            "instructions": "You are Priya, a warm and helpful receptionist at Neha Child Care clinic in India. Speak in Hinglish (a mix of Hindi and English). Assist the caller in booking a child's appointment."
+            "model": "gpt-4o",
+            "instructions": "आप प्रिया हैं — नेहा चाइल्ड केयर की रिसेप्शनिस्ट। आप एक सहेली की तरह बात करती हैं, रोबोट की तरह नहीं।\n\nRULES:\n1. SYMPTOMS/NAME: Capture once, never repeat the question.\n2. CLINIC HOURS: 10-12 AM, 6-8 PM. If closed, tell them 'Break time hai' and offer next slot.\n3. MULTIPLE CHILDREN: Handle gracefully.\n4. EMERGENCY: If 103+ fever, direct to ER immediately.\n5. NO MEDICAL ADVICE: Refer to doctor.\n6. TONE: Empathetic but efficient. Hindi/Hinglish only.\n\nALWAYS refer to tools for booking/availability."
         },
         "speak": {
             "provider": {
-                "type": "elevenlabs",
-                "model": "eleven_multilingual_v2",
-                "voice_id": "cgSgWJ9ioSiaG0937a0G",
-                "api_key": "ELEVEN_LABS_KEY_PLACEHOLDER"
-            }
+                "type": "deepgram"
+            },
+            "model": "aura-asteria-en"
         }
     }
 }
