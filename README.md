@@ -212,6 +212,25 @@ Bit depth     = 16-bit PCM LE
 
 ---
 
+## Performance & Logic Tuning
+
+The agent has been optimized for "World Class" speed and accuracy to handle clinical stress:
+
+### 1. Speed (Latency)
+-   **Parallel TTS**: Switched from serial (Wait for TTS to finish) to parallel (Start TTS immediately). Priya starts speaking as soon as the first sentence is generated.
+-   **Aggressive Endpointing**: Reduced `utterance_end_ms` to **1000ms** (from 1500ms). This cuts the response delay by nearly half a second.
+-   **Calendar Caching**: `check_available_slots` caches Google Calendar results for **30 seconds**. Subsequent checks within the same turn are instantaneous (<50ms).
+-   **Short Scripts**: Reduced wording in greetings and confirmations to minimize audio generation time.
+
+### 2. Logic & Reliability
+-   **Strict Confirmation Guard**: `book_appointment` will **NEVER** fire based on an assumption. It requires an explicit 'Yes' (Haan, Theek hai, Okay) first.
+-   **Hallucination Shield**: Priya is strictly forbidden from talking about non-clinic topics (interests, fees, etc.). She redirect all "weird" STT transcrips back to appointment booking.
+-   **One-Slot Policy**: To keep conversations fast, she offers only **one** best slot at a time instead of long lists.
+-   **Barge-in Sensitivity**: Threshold set to **100ms**. If you speak, Priya stops "Thinking" and "Talking" immediately to listen to you.
+-   **VAD confidence**: STT confidence threshold raised to **65%** to filter out fan noise or background TV.
+
+---
+
 ## Key Design Patterns
 
 | Pattern | Implementation |

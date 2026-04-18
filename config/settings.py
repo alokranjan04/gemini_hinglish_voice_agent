@@ -27,10 +27,10 @@ GEMINI_WS_URL = (
 DG_URL = (
     "wss://api.deepgram.com/v1/listen"
     "?model=nova-2&language=hi&encoding=mulaw&sample_rate=8000"
-    "&interim_results=true&utterance_end_ms=1500&vad_events=true"
-    "&endpointing=500&smart_format=true&numerals=true"
+    "&interim_results=true&utterance_end_ms=1000&vad_events=true"
+    "&endpointing=400&smart_format=true&numerals=true"
     "&keywords=ungli:2,ungliyan:2,dard:2,bukhaar:2,khansi:2,जुकाम:2,पैर:2,"
-    "appointment:3,shift:3,reschedule:3,booking:3,parent:2,child:2,doctor:2,vaccine:2,checkup:2"
+    "appointment:3,shift:3,reschedule:3,booking:3,parent:2,child:2,doctor:2,vaccine:2,checkup:2,pediatric:2,neonatal:2"
 )
 
 # ── App config (runtime-mutable: provider switching writes back to disk) ──────
