@@ -595,25 +595,37 @@ async def sarvam_handler(request):
                 print(f"▶️  [REPLAY]: {pt}")
                 asyncio.create_task(handle_transcript(pt))
 
-    # ── Keep-alive silence packets ─────────────────────────────────────────
+    # ── Keep-alive: Vobiz silence + Deepgram KeepAlive ───────────────────
+
+    _DG_KEEPALIVE = json.dumps({"type": "KeepAlive"})
 
     async def vobiz_keep_alive():
+        """Send silence to Vobiz every 0.8 s to prevent RTP timeout."""
         silence_mulaw = audioop.lin2ulaw(b"\x00" * 160, 2)
         silence_b64   = base64.b64encode(silence_mulaw).decode("utf-8")
         while not ws.closed:
             if sid:
-                # Keep Vobiz alive
-                await ws.send_str(json.dumps({
-                    "event": "playAudio", "streamId": sid,
-                    "media": {"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": silence_b64},
-                }))
-                # Keep Deepgram alive
-                if dg_ws:
-                    try:
-                        await dg_ws.send(silence_mulaw)
-                    except Exception:
-                        pass
+                try:
+                    await ws.send_str(json.dumps({
+                        "event": "playAudio", "streamId": sid,
+                        "media": {"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": silence_b64},
+                    }))
+                except Exception:
+                    pass
             await asyncio.sleep(0.8)
+
+    async def dg_keep_alive():
+        """Send Deepgram KeepAlive text frame every 5 s.
+        Runs from the moment dg_ws connects — independent of Vobiz sid.
+        Deepgram disconnects after ~10 s of no data (error 1011 net0001).
+        """
+        while not ws.closed:
+            if dg_ws:
+                try:
+                    await dg_ws.send(_DG_KEEPALIVE)
+                except Exception:
+                    break
+            await asyncio.sleep(5)
 
     # ── Deepgram receiver ─────────────────────────────────────────────────
 
@@ -687,6 +699,7 @@ async def sarvam_handler(request):
             additional_headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"},
         )
         asyncio.create_task(dg_receiver())
+        asyncio.create_task(dg_keep_alive())
         asyncio.create_task(vobiz_keep_alive())
 
         async for msg in ws:
