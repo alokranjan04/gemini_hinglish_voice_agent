@@ -322,7 +322,7 @@ def create_google_calendar_event(appt):
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Kolkata'},
         }
 
-        calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+        calendar_id = _get_calendar_id()
         event_result = service.events().insert(calendarId=calendar_id, body=event).execute()
         return event_result
     except Exception as e:
@@ -553,7 +553,7 @@ def check_available_slots(preferred_day):
     try:
         service = _get_calendar_service()
         if service:
-            calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+            calendar_id = _get_calendar_id()
             # Get the date for the target day
             target_dt = get_appointment_datetime(day, "12:00 PM")
             time_min = target_dt.replace(hour=0, minute=0).isoformat() + 'Z'
@@ -630,6 +630,15 @@ def check_available_slots(preferred_day):
 
 _CACHED_SERVICES = {}
 
+def _get_calendar_id() -> str:
+    """Return validated Google Calendar ID. Guards against the env var being
+    set to the full credentials JSON instead of a calendar ID string."""
+    cal_id = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip()
+    if not cal_id or cal_id.startswith("{") or len(cal_id) > 150:
+        print("[CALENDAR] GOOGLE_CALENDAR_ID invalid — falling back to 'primary'")
+        return "primary"
+    return cal_id
+
 def _get_sheets_service():
     if 'sheets' in _CACHED_SERVICES:
         return _CACHED_SERVICES['sheets'], SPREADSHEET_ID
@@ -692,7 +701,7 @@ def _delete_calendar_events(patient_name):
     """Delete all upcoming calendar events matching patient name."""
     service = _get_calendar_service()
     if not service: return 0
-    calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+    calendar_id = _get_calendar_id()
     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     events = service.events().list(
         calendarId=calendar_id, q=f"Appointment: {patient_name}",

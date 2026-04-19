@@ -66,7 +66,7 @@ async def _sarvam_stream_once(messages: list):
         "temperature": 0.1,
         "stream": True,
     }
-    timeout   = aiohttp.ClientTimeout(total=12)
+    timeout   = aiohttp.ClientTimeout(total=8, sock_read=8)
     tool_bufs: dict = {}
     try:
         async with get_http().post(
@@ -267,13 +267,24 @@ async def sarvam_handler(request):
             tool_calls = []
             sent_buf   = ""
 
+            # Tokens that indicate the LLM is hallucinating a tool call as text
+            _HALLUC_TOKENS = frozenset({
+                "arg_key", "arg_value", "book_appointment", "check_available_slots",
+                "cancel_appointment", "reschedule_appointment",
+                "patient_name", "preferred_time", "preferred_day",
+            })
+
             async def flush_sent(s: str):
                 nonlocal speak_task
                 s = s.strip()
-                if s:
-                    # FIRE-AND-FORGET: Don't 'await' the speak_task in the loop.
-                    # This lets the next sentence start TTS generation immediately!
-                    speak_task = asyncio.create_task(speak(s))
+                if not s:
+                    return
+                # Block sentences that are clearly tool-call artifacts leaking into TTS
+                if any(t in s.lower() for t in _HALLUC_TOKENS):
+                    print(f"[SPEAK BLOCKED] Tool artifact: {s[:60]!r}")
+                    return
+                # FIRE-AND-FORGET: Don't 'await' the speak_task in the loop.
+                speak_task = asyncio.create_task(speak(s))
 
             async for kind, val in _sarvam_stream(history):
                 # ── BARGE-IN CHECK ──
@@ -312,18 +323,27 @@ async def sarvam_handler(request):
                     print(f"⚠ [HALLUC] Detected: {full_text[:80]}")
                     if call_metrics:
                         call_metrics.record_hallucination()
+                    fn_match = re.search(
+                        r"\b(book_appointment|check_available_slots|cancel_appointment|reschedule_appointment)\b",
+                        full_text,
+                    )
+                    fn_name = fn_match.group(1) if fn_match else None
                     xml_pairs = re.findall(
                         r"<arg_key>\s*(\w+)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*</arg_value>",
                         full_text, re.DOTALL,
                     )
-                    fn_match = re.search(r"\b(book_appointment|check_available_slots)\b", full_text)
-                    fn_name  = fn_match.group(1) if fn_match else None
-                    # Fallback: if AI outputs raw JSON instead of XML tags
-                    if not xml_pairs and ("{" in full_text and "}" in full_text):
+                    # ── XML path: Sarvam sometimes outputs tool calls as XML ──
+                    if xml_pairs and fn_name:
+                        args_dict = {k: v.strip() for k, v in xml_pairs}
+                        tool_calls = [{"id": "halluc_xml", "type": "function",
+                                       "function": {"name": fn_name,
+                                                    "arguments": json.dumps(args_dict, ensure_ascii=False)}}]
+                        print(f"[HALLUC→TOOL] XML converted: {fn_name}({args_dict})")
+                    # ── JSON path: raw JSON object in output ─────────────────
+                    elif not xml_pairs and ("{" in full_text and "}" in full_text):
                         try:
                             json_body = full_text[full_text.find("{"):full_text.rfind("}")+1]
                             extracted = json.loads(json_body)
-                            fn_name = fn_name or next((k for k in ["book_appointment", "check_available_slots", "cancel_appointment", "reschedule_appointment"] if k in full_text), None)
                             if extracted and fn_name:
                                 tool_calls = [{"id": "halluc_json", "type": "function",
                                                "function": {"name": fn_name, "arguments": json_body}}]

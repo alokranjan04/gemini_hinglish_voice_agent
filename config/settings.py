@@ -34,6 +34,8 @@ DG_URL = (
     ",ungli:2,ungliyan:2,pair:2,seene:2,sar:2"
     ",appointment:3,booking:3,reschedule:3,cancel:3"
     ",doctor:2,vaccine:2,checkup:2,naam:2,kal:2,aaj:2"
+    ",nilesh:3,neelesh:3,shubham:3,rohan:2,priya:2,ananya:2"
+    ",arjun:2,ishaan:2,aanya:2,vivaan:2,kavya:2,aditya:2"
 )
 
 # ── App config (runtime-mutable: provider switching writes back to disk) ──────
