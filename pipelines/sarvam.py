@@ -162,9 +162,11 @@ async def sarvam_handler(request):
             f"{a['patient_name']} on {a['preferred_day']} at {a['preferred_time']}"
             for a in _existing
         )
-        caller_ctx = "\n\n" + APP_CONFIG["prompts"]["caller_context"].format(
-            bookings=booking_strs
+        ctx_tmpl = APP_CONFIG["prompts"].get(
+            "caller_context",
+            "CALLER CONTEXT: This caller has an existing appointment: {bookings}."
         )
+        caller_ctx = "\n\n" + ctx_tmpl.format(bookings=booking_strs)
 
     system_instructions = (
         f"{APP_CONFIG['agent']['system_prompt']}\n\n"
@@ -300,6 +302,8 @@ async def sarvam_handler(request):
             print(f"⏱  LLM+TTS : {turn_llm_ms} ms")
             if not full_text and not tool_calls:
                 print(f"⚠  [LLM EMPTY] No output after {turn_llm_ms}ms")
+                await flush_sent("जी, बताइए।")
+                return
 
             # ── Hallucination guard ─────────────────────────────────────────
             if full_text and not tool_calls:
@@ -351,23 +355,53 @@ async def sarvam_handler(request):
                         if not args.get("preferred_day"):  args["preferred_day"]  = "Today"
                         args.update({"patient_age": "5", "parent_name": "Guardian",
                                      "contact_number": caller_id})
-                        # ── Override time with what user actually said ────────
-                        # The LLM sometimes picks the nearest slot (e.g. 06:10)
-                        # instead of correctly parsing "साढ़े छह" → 06:30.
-                        # hindi_to_time() does an exact parse of the transcript.
-                        _spoken_time = hindi_to_time(transcript)
+                        # ── Override time: scan recent user turns + current ──
+                        # Check last 4 user messages so "ग्यारह बजे" said earlier
+                        # in the confirmation turn is not missed.
+                        _recent_text = " ".join(
+                            m["content"] for m in history[-5:]
+                            if m.get("role") == "user" and m.get("content")
+                        ) + " " + transcript
+                        _spoken_time = hindi_to_time(transcript) or hindi_to_time(_recent_text)
                         if _spoken_time and _spoken_time != args.get("preferred_time"):
                             print(f"[TIME OVERRIDE] LLM={args['preferred_time']!r} → spoke={_spoken_time!r}")
                             args["preferred_time"] = _spoken_time
+                        # ── Day override for booking too ─────────────────────
+                        _recent_user = " ".join(
+                            m["content"] for m in history[-8:]
+                            if m.get("role") == "user" and m.get("content")
+                        ).lower()
+                        if args.get("preferred_day") in ("Today", "today") or not args.get("preferred_day"):
+                            if any(w in _recent_user for w in ["परसों", "parson"]):
+                                args["preferred_day"] = "Day after tomorrow"
+                            elif any(w in _recent_user for w in ["कल", "kal", "tomorrow"]):
+                                args["preferred_day"] = "Tomorrow"
+                                print(f"[DAY OVERRIDE] booking → Tomorrow")
                     elif fn in ("cancel_appointment", "reschedule_appointment"):
                         if not args.get("contact_number"):
                             args["contact_number"] = caller_id
-                        # ── Same guard for reschedule new_time ───────────────
                         if fn == "reschedule_appointment":
-                            _spoken_time = hindi_to_time(transcript)
+                            _recent_text = " ".join(
+                                m["content"] for m in history[-5:]
+                                if m.get("role") == "user" and m.get("content")
+                            ) + " " + transcript
+                            _spoken_time = hindi_to_time(transcript) or hindi_to_time(_recent_text)
                             if _spoken_time and _spoken_time != args.get("new_time"):
                                 print(f"[TIME OVERRIDE] reschedule LLM={args.get('new_time')!r} → spoke={_spoken_time!r}")
                                 args["new_time"] = _spoken_time
+
+                    # ── Day override: if user mentioned কল/tomorrow in recent msgs ──
+                    if fn == "check_available_slots":
+                        recent_user = " ".join(
+                            m["content"] for m in history[-8:]
+                            if m.get("role") == "user" and m.get("content")
+                        ).lower()
+                        if any(w in recent_user for w in ["परसों", "parson", "day after tomorrow"]):
+                            args["preferred_day"] = "Day after tomorrow"
+                            print(f"[DAY OVERRIDE] User said परसों → Day after tomorrow")
+                        elif any(w in recent_user for w in ["कल", "kal", "tomorrow"]):
+                            args["preferred_day"] = "Tomorrow"
+                            print(f"[DAY OVERRIDE] User said कल → Tomorrow")
 
                     print(f"🔧 Tool: {fn}({args})")
                     t_tool = time.time()
@@ -436,8 +470,9 @@ async def sarvam_handler(request):
                                 best_slot = s
                                 break
                         
-                        first_hi = time_to_hindi(best_slot)
-                        slot_reply = f"क्या आज {first_hi} का समय ठीक रहेगा?"
+                        first_hi  = time_to_hindi(best_slot)
+                        day_label = day_to_hindi(slots_res.get("day", "Today"))
+                        slot_reply = f"क्या {day_label} {first_hi} का समय ठीक रहेगा?"
                     else:
                         tmr = await asyncio.to_thread(
                             FUNCTION_MAP["check_available_slots"], preferred_day="Tomorrow"

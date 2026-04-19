@@ -56,10 +56,14 @@ _HI_MIN_INV:  dict[str, int] = {v: k for k, v in _HI_MIN.items()}
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def day_to_hindi(day_str: str) -> str:
-    """'Tuesday' → 'मंगलवार'.  Today's weekday → 'आज'."""
-    today = datetime.now().strftime("%A")
-    if day_str == today or day_str in ("Today", "today", "आज"):
+    """'Tuesday' → 'मंगलवार'.  Today's weekday → 'आज'. Tomorrow's → 'कल'."""
+    from datetime import timedelta
+    today    = datetime.now().strftime("%A")
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%A")
+    if day_str in ("Today", "today", "आज") or day_str == today:
         return "आज"
+    if day_str in ("Tomorrow", "tomorrow", "कल") or day_str == tomorrow:
+        return "कल"
     return _HI_DAY.get(day_str, day_str)
 
 
@@ -130,7 +134,18 @@ def hindi_to_time(text: str, default_period: str = "PM") -> str | None:
         return _HI_MIN_INV.get(w)
 
     def _fmt(h: int, m: int) -> str:
-        return f"{h:02d}:{m:02d} {period}"
+        # Clinic-aware AM/PM: if no explicit period keyword was found in text,
+        # infer from hour — morning slot 10-12 → AM, evening slot 1-8 → PM.
+        p = period
+        if p == default_period and not any(
+            w in tl for w in ("सुबह", "subah", "morning", "savere",
+                              "शाम", "sham", "evening", "रात", "night")
+        ):
+            if 10 <= h <= 12:
+                p = "AM"
+            elif 1 <= h <= 8:
+                p = "PM"
+        return f"{h:02d}:{m:02d} {p}"
 
     # ── साढ़े X  (X hours 30 min) — MUST check before bare 'बजे' ───────────
     m = re.search(r'साढ़े\s+(\S+)', text)

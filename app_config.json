@@ -5,7 +5,6 @@
         "business": "Neha Child Care",
         "system_prompt": "आप प्रिया हैं — नेहा चाइल्ड केयर की रिसेप्शनिस्ट। आप बहुत तेज़ (Quick) और मददगार हैं।\n\nSPEED RULE: बात कम और काम ज़्यादा। छोटे वाक्यों में जवाब दें।\n\nCONFIRMATION RULE (CRITICAL):\n- किसी भी बच्चे का appointment तब तक BOOK मत करो जब तक यूजर साफ़-साफ़ 'हाँ', 'Yes', 'कर दो', या 'ठीक है' न बोल दे।\n- अंदाज़े से book नहीं करना है। पहले पूछो- 'क्या मैं ये समय पक्का कर दूँ?'\n- एक बार book हो जाए, तो सिर्फ एक बार confirm करो। बार-बार एक ही बात मत बोलो।"
     },
-
     "clinic": {
         "name": "Neha Child Care",
         "specialty": "Child Specialist and Pediatrics",
@@ -16,18 +15,16 @@
             "sunday": "Closed"
         }
     },
-
     "scripts": {
         "greeting": "नमस्ते! नेहा चाइल्ड केयर में आपका स्वागत है। मैं प्रिया बोल रही हूँ। बताइए, क्या मदद करूँ?",
         "comfort": "जी, समझ गई। फिकर मत कीजिये।",
         "filler_listening": "जी, बोलिए।",
         "booking_confirmation": "{day} {time} {patient_name} का appointment मैंने पक्का (Confirm) कर दिया है।"
     },
-
     "prompts": {
-        "sarvam_rules": "STRICT LOGIC:\n1. NEVER call book_appointment before hearing a clear YES/Haan/Theek Hai.\n2. AFTER booking, stop talking. Do not process the turn further.\n3. SLOTS: Offer ONLY ONE slot at a time to keep it fast.\n4. MEMORY: Once you have the name/reason, do not ask again.\n5. SPEED: Responses under 8 words if possible."
+        "sarvam_rules": "STRICT BOOKING RULES:\n1. NO REPETITION: एक बात एक बार। Same sentence NEVER twice.\n2. GREETING: If caller says only 'Hello'/'Hi'/'हेलो'/'हाँ'/'जी' → say EXACTLY 'जी, बताइए।' NOTHING ELSE. NEVER re-introduce yourself.\n3. MEMORY: Once name/reason is mentioned ANYWHERE in conversation — NEVER ask again. Even garbled transcription (e.g. 'paid judge' = 'पेट दर्द', 'fate ache' = 'पेट दर्द') = REASON captured. Accept ANY health-related words.\n4. BOOKING FLOW — in order:\n   Step 1 — Extract NAME and REASON from conversation:\n     • ANY words about illness/pain/body = REASON — do NOT ask again, even if garbled.\n     • Any child name mentioned = NAME — do NOT ask again.\n     • Name correction: Latest-mentioned name is correct.\n     → BOTH known: skip to Step 2 IMMEDIATELY.\n     → Only REASON: ask 'बच्चे का नाम क्या है?'\n     → Only NAME: ask 'क्या तकलीफ है?'\n     → NEITHER: ask 'बच्चे का नाम और तकलीफ बताइए।'\n   Step 2 — Call check_available_slots with the RIGHT day:\n     • Caller said 'कल'/'kal'/'tomorrow' → preferred_day='Tomorrow'\n     • Caller said 'परसों'/'parson' → preferred_day='Day after tomorrow'\n     • Otherwise → preferred_day='Today'\n     NEVER ask 'कौन सा दिन' or 'किस दिन' — EVER. Day comes from what caller already said.\n   Step 3 — Offer ONE slot: 'क्या [आज/कल] [time_hi] का समय ठीक रहेगा?'\n     → Caller says no → offer NEXT slot.\n   Step 4 — BOOK IMMEDIATELY when caller says ANY of:\n     हाँ, हां, yes, ठीक, ठीक है, ठीक रहेगा, चलेगा, हो जाए, बुक कर दो, कर दो, okay, ok, bilkul, sure, जी हाँ\n     OR if caller says a TIME after a slot was offered — treat it as confirmation + their preferred time.\n     Call book_appointment with the confirmed time_en. DO NOT ask again.\n5. CANCEL: 'cancel'/'रद्द' → IMMEDIATELY call cancel_appointment. Number already known — NEVER ask.\n6. NAME CORRECTION after booking: cancel old name → rebook with corrected name, same slot, same reason.\n7. TIME FORMAT: NEVER '11:30 AM'. Always Hindi: 'सुबह के साढ़े ग्यारह बजे', 'शाम के छह बजे'.\n8. ONE QUESTION at a time. Under 8 words per response. Move FAST.\n9. CLINIC HOURS: सुबह 10–12, शाम 6–8. Sunday closed. After 12pm offer evening only.",
+        "caller_context": "CALLER CONTEXT: This caller already has a booked appointment: {bookings}. As soon as the call connects, ask: 'आपका पहले से appointment है — क्या आप उसी के बारे में बात करना चाहते हैं, या नया appointment चाहिए?'"
     },
-
     "tools": {
         "sarvam": [
             {
@@ -38,9 +35,13 @@
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "preferred_day": {"type": "string"}
+                            "preferred_day": {
+                                "type": "string"
+                            }
                         },
-                        "required": ["preferred_day"]
+                        "required": [
+                            "preferred_day"
+                        ]
                     }
                 }
             },
@@ -52,12 +53,25 @@
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "patient_name":   {"type": "string"},
-                            "reason":         {"type": "string"},
-                            "preferred_day":  {"type": "string"},
-                            "preferred_time": {"type": "string"}
+                            "patient_name": {
+                                "type": "string"
+                            },
+                            "reason": {
+                                "type": "string"
+                            },
+                            "preferred_day": {
+                                "type": "string"
+                            },
+                            "preferred_time": {
+                                "type": "string"
+                            }
                         },
-                        "required": ["patient_name", "reason", "preferred_day", "preferred_time"]
+                        "required": [
+                            "patient_name",
+                            "reason",
+                            "preferred_day",
+                            "preferred_time"
+                        ]
                     }
                 }
             },
@@ -69,9 +83,13 @@
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "patient_name": {"type": "string"}
+                            "patient_name": {
+                                "type": "string"
+                            }
                         },
-                        "required": ["patient_name"]
+                        "required": [
+                            "patient_name"
+                        ]
                     }
                 }
             },
@@ -83,17 +101,26 @@
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "patient_name": {"type": "string"},
-                            "new_day":      {"type": "string"},
-                            "new_time":     {"type": "string"}
+                            "patient_name": {
+                                "type": "string"
+                            },
+                            "new_day": {
+                                "type": "string"
+                            },
+                            "new_time": {
+                                "type": "string"
+                            }
                         },
-                        "required": ["patient_name", "new_day", "new_time"]
+                        "required": [
+                            "patient_name",
+                            "new_day",
+                            "new_time"
+                        ]
                     }
                 }
             }
         ],
         "gemini": []
     },
-
     "active_provider": "sarvam"
 }
