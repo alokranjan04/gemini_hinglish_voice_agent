@@ -501,18 +501,49 @@ async def sarvam_handler(request):
                     if slots_res.get("urgent_message"):
                         slot_reply = slots_res["urgent_message"]
                     elif slots_res.get("available_slots"):
-                        # Smart selection: if user mentioned a time, try to match it
-                        best_slot = slots_res["available_slots"][0]
-                        user_pref_lower = transcript.lower()
+                        best_slot    = slots_res["available_slots"][0]
+                        booked_slots = slots_res.get("booked_slots", [])
+
+                        # Parse user's time preference from recent messages
+                        recent_user_text = " ".join(
+                            m["content"] for m in history[-6:]
+                            if m.get("role") == "user" and m.get("content")
+                        ) + " " + transcript
+                        user_time = hindi_to_time(recent_user_text)
+
+                        # Check if user's preferred time is already booked
+                        preferred_was_booked = False
+                        booked_time_hi = ""
+                        if user_time:
+                            try:
+                                user_dt = datetime.strptime(user_time, "%I:%M %p")
+                                for bk in booked_slots:
+                                    bk_dt = datetime.strptime(bk, "%I:%M %p")
+                                    if abs((user_dt - bk_dt).total_seconds()) < 600:
+                                        preferred_was_booked = True
+                                        booked_time_hi = time_to_hindi(bk)
+                                        break
+                            except Exception:
+                                pass
+
+                        # Try to match user's preferred time to an available slot
+                        user_pref_lower = recent_user_text.lower()
                         for s in slots_res["available_slots"]:
-                            # basic match for strings like "7", "seven", "सात"
                             if any(x in user_pref_lower for x in [s.split(":")[0].lstrip("0"), time_to_hindi(s)]):
                                 best_slot = s
                                 break
-                        
+
                         first_hi  = time_to_hindi(best_slot)
                         day_label = day_to_hindi(slots_res.get("day", "Today"))
-                        slot_reply = f"क्या {day_label} {first_hi} का समय ठीक रहेगा?"
+
+                        if preferred_was_booked and booked_time_hi:
+                            slot_reply = (
+                                f"{booked_time_hi} की appointment पहले से book है। "
+                                f"{first_hi} में doctor free हैं। "
+                                f"क्या मैं {first_hi} का appointment book कर दूँ?"
+                            )
+                        else:
+                            slot_reply = f"जी, {day_label} {first_hi} का slot है — ठीक रहेगा?"
                     else:
                         tmr = await asyncio.to_thread(
                             FUNCTION_MAP["check_available_slots"], preferred_day="Tomorrow"
