@@ -371,21 +371,40 @@ async def sarvam_handler(request):
                     fn   = tc["function"]["name"]
                     args = json.loads(tc["function"]["arguments"])
                     if fn == "book_appointment":
-                        if not args.get("preferred_time"): args["preferred_time"] = "06:00 PM"
                         if not args.get("preferred_day"):  args["preferred_day"]  = "Today"
                         args.update({"patient_age": "5", "parent_name": "Guardian",
                                      "contact_number": caller_id})
-                        # ── Override time: scan recent user turns + current ──
-                        # Check last 4 user messages so "ग्यारह बजे" said earlier
-                        # in the confirmation turn is not missed.
-                        _recent_text = " ".join(
-                            m["content"] for m in history[-5:]
-                            if m.get("role") == "user" and m.get("content")
-                        ) + " " + transcript
-                        _spoken_time = hindi_to_time(transcript) or hindi_to_time(_recent_text)
-                        if _spoken_time and _spoken_time != args.get("preferred_time"):
-                            print(f"[TIME OVERRIDE] LLM={args['preferred_time']!r} → spoke={_spoken_time!r}")
-                            args["preferred_time"] = _spoken_time
+                        # ── Time: normalise Hindi → English then scan history ─
+                        # LLM sometimes passes time in Hindi ('सुबह के साढ़े दस बजे')
+                        # which breaks _normalize_time and skips the conflict check.
+                        # 1. Try converting the LLM's own Hindi value first.
+                        # 2. Then scan full user history for the last spoken time.
+                        pt = args.get("preferred_time", "")
+                        _is_english_time = bool(re.match(r"^\d{1,2}:\d{2}\s*(AM|PM)$", pt.strip(), re.IGNORECASE))
+                        if not _is_english_time:
+                            # Scan all user turns in history for confirmed time
+                            _full_user_text = " ".join(
+                                m["content"] for m in history
+                                if m.get("role") == "user" and m.get("content")
+                            ) + " " + transcript
+                            _spoken_time = (hindi_to_time(pt) or
+                                            hindi_to_time(transcript) or
+                                            hindi_to_time(_full_user_text))
+                            if _spoken_time:
+                                print(f"[TIME NORMALIZE] Hindi→English: {pt!r} → {_spoken_time!r}")
+                                args["preferred_time"] = _spoken_time
+                            else:
+                                args["preferred_time"] = "06:00 PM"  # safe default
+                        else:
+                            # English format: still check recent history for user correction
+                            _recent_text = " ".join(
+                                m["content"] for m in history[-8:]
+                                if m.get("role") == "user" and m.get("content")
+                            ) + " " + transcript
+                            _spoken_time = hindi_to_time(transcript) or hindi_to_time(_recent_text)
+                            if _spoken_time and _spoken_time != pt:
+                                print(f"[TIME OVERRIDE] LLM={pt!r} → spoke={_spoken_time!r}")
+                                args["preferred_time"] = _spoken_time
                         # ── Day override for booking too ─────────────────────
                         _recent_user = " ".join(
                             m["content"] for m in history[-8:]

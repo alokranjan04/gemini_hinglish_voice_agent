@@ -488,7 +488,6 @@ def send_call_summary_email(summary, transcript):
         sender_name="Priya Assistant",
     )
 
-from functools import lru_cache
 import time
 
 _AVAILABLE_SLOTS_CACHE = {}
@@ -693,7 +692,9 @@ def _find_sheet_rows(patient_name, contact_number):
         phone_match = len(row) > 7 and contact_number and row[7] == str(contact_number)
         # Skip rows already cancelled
         is_cancelled = len(row) > 3 and row[3].strip().lower() == "cancelled"
-        if (name_match or phone_match) and not is_cancelled:
+        # Match only when BOTH name AND phone match — different children from
+        # the same parent phone number must get separate rows, not overwrite.
+        if (name_match and phone_match) and not is_cancelled:
             matches.append((i, row))
     return matches
 
