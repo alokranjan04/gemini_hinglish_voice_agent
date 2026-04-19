@@ -23,7 +23,7 @@ from config.settings import (
 )
 from core.recorder import _TimelineRecorder
 from core.hindi_utils import JUNK_RE, SENT_RE, day_to_hindi, time_to_hindi, hindi_to_time, _HI_DAY
-from pipelines.http_client import get_http
+from pipelines.http_client import get_http, reset_http
 from pharmacy_functions import FUNCTION_MAP, send_call_summary_email, APPOINTMENTS_DB
 from metrics.collector import store, resource_poller, TurnLatency
 from metrics.cost_calculator import calculate_cost
@@ -108,6 +108,7 @@ async def _sarvam_stream_once(messages: list):
                     pass
     except Exception as e:
         print(f"[STREAM ERROR] {e}")
+        reset_http()
         return
     for i in sorted(tool_bufs):
         buf = tool_bufs[i]
