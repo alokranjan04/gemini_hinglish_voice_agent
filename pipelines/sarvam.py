@@ -302,9 +302,6 @@ async def sarvam_handler(request):
                         await flush_sent(p)
                     sent_buf = parts[-1]
                 elif kind == "tool":
-                    # Tool calls need to wait for previous speech to finish
-                    if speak_task and not speak_task.done():
-                        await speak_task 
                     tool_calls.append(val)
 
             if sent_buf.strip() and not tool_calls:
@@ -445,7 +442,11 @@ async def sarvam_handler(request):
 
                     print(f"🔧 Tool: {fn}({args})")
                     t_tool = time.time()
-                    res = await asyncio.to_thread(FUNCTION_MAP[fn], **args)
+                    # Start tool call immediately so it runs concurrently with any remaining TTS
+                    _tool_task = asyncio.create_task(asyncio.to_thread(FUNCTION_MAP[fn], **args))
+                    if speak_task and not speak_task.done():
+                        await speak_task
+                    res = await _tool_task
                     turn_tool_ms = int((time.time() - t_tool) * 1000)
                     if call_metrics:
                         call_metrics.record_tool_call(fn, args, res, turn_tool_ms)

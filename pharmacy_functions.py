@@ -571,32 +571,6 @@ def check_available_slots(preferred_day):
     except Exception as e:
         print(f"CALENDAR SYNC WARNING: {e}")
 
-    # C. Google Sheets fallback — catches bookings from previous sessions
-    # (APPOINTMENTS_DB is in-memory and resets on container restart)
-    try:
-        sheets_svc, spreadsheet_id = _get_sheets_service()
-        if sheets_svc:
-            result = sheets_svc.spreadsheets().values().get(
-                spreadsheetId=spreadsheet_id, range="Sheet1!A:H").execute()
-            target_date = get_appointment_datetime(day, "12:00 PM").date()
-            for row in result.get("values", [])[1:]:   # skip header
-                if len(row) < 7:
-                    continue
-                status = row[3].strip().lower() if len(row) > 3 else ""
-                if status in ("cancelled", "", "no"):
-                    continue
-                # Column E = booking_time "YYYY-MM-DD HH:MM"
-                # Column G = booking_slot "HH:MM AM/PM"
-                try:
-                    bk_dt = datetime.strptime(row[4], "%Y-%m-%d %H:%M")
-                    if bk_dt.date() == target_date:
-                        slot_dt = datetime.strptime(row[6], "%I:%M %p")
-                        booked_times.append(slot_dt)
-                except Exception:
-                    pass
-    except Exception as e:
-        print(f"SHEETS SYNC WARNING: {e}")
-
     # 3. Filter Slots (Ensure 10-minute gap)
     available_slots = []
     for slot_str in total_slots:
