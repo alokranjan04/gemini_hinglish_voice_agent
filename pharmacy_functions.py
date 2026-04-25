@@ -355,9 +355,14 @@ def book_appointment(patient_name, patient_age, parent_name, contact_number, pre
 
     # ── CONFLICT CHECK: Local DB only (Blazing Fast) ──
     # Prevents double-booking from same agent/simultaneous calls
-    for existing in APPOINTMENTS_DB["appointments"].values():
+    for existing_id, existing in list(APPOINTMENTS_DB["appointments"].items()):
         if (_normalize_day(existing["preferred_day"]) == preferred_day and 
             _normalize_time(existing["preferred_time"]) == preferred_time):
+            # If same caller, allow update/overwrite
+            if str(existing.get("contact_number")) == str(contact_number):
+                print(f"[RE-BOOKING]: Same user ({contact_number}) updating slot {preferred_time}. Overwriting.")
+                APPOINTMENTS_DB["appointments"].pop(existing_id, None)
+                continue
             print(f"[CONFLICT]: Slot {preferred_time} on {preferred_day} is already in Local DB.")
             return {"success": False, "message": f"CONFLICT: {preferred_time} is already booked."}
 
