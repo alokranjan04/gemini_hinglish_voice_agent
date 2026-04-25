@@ -32,7 +32,7 @@ DG_URL = (
     "&keywords=mujhe:4,bache:4,bachon:4,dikhaana:4,appointment:5,booking:5,book:5"
     ",fever:4,bukhaar:4,bukhar:4,pait:4,dard:4,khansi:4,khaansi:4,ulti:4,bukhaar:4"
     ",doctor:4,clinic:4,naam:4,umar:4,saal:4,kal:4,aaj:4,subah:4,shaam:4,ira:5,aira:5,ayra:5"
-    ",nilesh:3,neelesh:3,shubham:3,rohan:3,priya:3,ananya:3,vaccine:3,checkup:3"
+    ",trishna:5,krishna:5,trisna:5,trushna:5,t-r-i-s-h-n-a:5,k-r-i-s-h-n-a:5,तृष्णा:5,कृष्णा:5"
 )
 
 # ── App config (runtime-mutable: provider switching writes back to disk) ──────

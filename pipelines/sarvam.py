@@ -158,6 +158,8 @@ async def sarvam_handler(request):
     is_responding      = False
     is_speaking        = False
     speak_task         = None
+    worker_task        = None
+    speak_queue        = asyncio.Queue()
     partial_hyp        = ""
     pending_transcript = None   # last utterance queued while bot was busy
     call_metrics       = None
@@ -268,8 +270,22 @@ async def sarvam_handler(request):
             finally:
                 is_speaking = False
 
+    async def speak_worker():
+        nonlocal speak_task
+        try:
+            while True:
+                t = await speak_queue.get()
+                if t is None:
+                    break
+                # Each sentence gets its own task so it can be cancelled
+                speak_task = asyncio.create_task(speak(t))
+                await speak_task
+                speak_queue.task_done()
+        except asyncio.CancelledError:
+            pass
+
     async def handle_transcript(transcript: str):
-        nonlocal is_responding, speak_task, pending_transcript, history
+        nonlocal is_responding, speak_task, worker_task, pending_transcript, history, speak_queue
 
         if is_responding:
             pending_transcript = transcript
@@ -313,7 +329,6 @@ async def sarvam_handler(request):
             })
 
             async def flush_sent(s: str):
-                nonlocal speak_task
                 s = s.strip()
                 if not s:
                     return
@@ -324,8 +339,15 @@ async def sarvam_handler(request):
                    any(t.replace("_", " ") in _halluc_lower for t in _HALLUC_TOKENS):
                     print(f"[SPEAK BLOCKED] Tool artifact: {s[:60]!r}")
                     return
-                # FIRE-AND-FORGET: Don't 'await' the speak_task in the loop.
-                speak_task = asyncio.create_task(speak(s))
+                # Queue the sentence for the worker
+                await speak_queue.put(s)
+            
+            # Start a fresh worker for this turn if needed
+            if worker_task is None or worker_task.done():
+                while not speak_queue.empty():
+                    try: speak_queue.get_nowait()
+                    except: break
+                worker_task = asyncio.create_task(speak_worker())
 
             async for kind, val in _sarvam_stream(history):
                 # ── BARGE-IN CHECK ──
@@ -788,8 +810,18 @@ async def sarvam_handler(request):
                     is_responding = False # Stops current LLM turn
                     if call_metrics:
                         call_metrics.record_interruption()
+                    
+                    # Stop both the queue worker and the current active audio
+                    if worker_task and not worker_task.done():
+                        worker_task.cancel()
                     if speak_task and not speak_task.done():
                         speak_task.cancel()
+                    
+                    # Clear the queue
+                    while not speak_queue.empty():
+                        try: speak_queue.get_nowait()
+                        except: break
+                            
                     asyncio.create_task(clear_audio())
 
                 # ── FINAL TRANSCRIPT HANDLING ──
