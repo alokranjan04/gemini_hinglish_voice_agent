@@ -16,7 +16,8 @@ from datetime import datetime
 JUNK_RE = re.compile(
     r"\b(book_appointment|check_available_slots|arg_key|arg_value|tool_call|tool_response"
     r"|patient_name|preferred_day|preferred_time|patient_age|parent_name|contact_number"
-    r"|reason|बेचारा|bechara)\b",
+    r"|reason|patient name|preferred day|preferred time|patient age|parent name|contact number"
+    r"|बेचारा|bechara)\b",
     re.IGNORECASE,
 )
 SENT_RE = re.compile(r"(?<=[।.!?])\s*")

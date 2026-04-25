@@ -1,8 +1,8 @@
-# Technical Architecture: Priya — AI Voice Receptionist
+# Technical Architecture: Priya — AI Clinic Receptionist (Solving Missed Calls)
 
 **Deployment:** Neha Child Care Pediatric Clinic  
 **Status:** Production  
-**Last updated:** April 2026
+**Goal:** 100% Call Response Rate & Automated Booking
 
 ---
 

@@ -1,26 +1,30 @@
-# Priya — AI Voice Receptionist for Neha Child Care
+# Priya: AI Clinic Receptionist — Never Miss a Patient Call Again
 
-> A production Hindi voice agent that answers real clinic phone calls, books appointments, and manages a live Google Calendar — with two switchable AI pipelines and a built-in metrics dashboard.
+> **Missed calls are missed patients.** Priya is a production-grade AI voice agent designed for Indian clinics to handle 100% of incoming calls, book appointments 24/7, and manage your Google Calendar automatically—even when your receptionist is busy or away.
 
-Priya speaks natural conversational Hindi (Devanagari script), handles appointment booking / cancellation / rescheduling, checks real-time slot availability against Google Calendar, logs every booking to Google Sheets, sends .ics email invites, and emails a call transcript after every call — all over a live phone line.
-
----
-
-## The Problem
-
-Small clinics in India miss 40–60% of incoming calls. Receptionists are expensive and unavailable at night. Parents calling about sick children get voicemail.
-
-This project replaces that with AI — at a fraction of SaaS pricing, with full control over the voice, language, and booking logic.
+Priya speaks natural conversational Hindi and Hinglish, handles booking/cancellation/rescheduling, checks real-time slot availability, logs every call to Google Sheets, and sends instant email confirmations—all over a live phone line.
 
 ---
 
-## Architecture Overview
+## 🛑 The Problem: Missed Calls = Lost Revenue
+
+Small to mid-sized clinics in India face a critical challenge:
+*   **40–60% of incoming calls go unanswered** during peak hours or lunch breaks.
+*   **Nighttime & Weekend calls** are completely lost to voicemail or go unpicked.
+*   **Manual Booking** leads to human errors, double-bookings, and no-shows.
+*   **Receptionists are expensive** and hard to train for 24/7 availability.
+
+Priya solves this by providing a professional, empathetic, and always-available voice interface that works exactly like a senior receptionist.
+
+---
+
+## 🛠️ System Architecture
 
 ```
 Phone call (Vobiz)
         │
         ▼
-  POST /answer  ←─── Vobiz webhook (call arrives)
+   POST /answer  ←─── Vobiz webhook (Call Arrives)
         │
         ▼
   app_config.json ──► active_provider = "sarvam" | "google"
@@ -32,221 +36,105 @@ Pipeline A  Pipeline B
 (Sarvam)   (Gemini)
 ```
 
-A single `aiohttp` server on **port 5050** handles both pipelines. The active pipeline is selected per-call from `app_config.json` — switchable live via dashboard or API with no restart.
+A single `aiohttp` server handles both pipelines. You can switch between providers live via the dashboard without any downtime.
 
 ---
 
-## Pipeline A — Sarvam (Primary / Production)
+## ⚡ Pipeline A — Sarvam (Hinglish Optimized)
 
 ```
 Vobiz WebSocket (mulaw 8 kHz)
   │
-  ├──► Deepgram Nova-3  (STT WebSocket, Hindi, interim + final transcripts)
+  ├──► Deepgram Nova-3  (STT, Hindi/Hinglish, interim + final)
   │         │
   │    ┌────┴──────────────────────────────────────┐
-  │    │  Transcript processing                     │
-  │    │  • Confidence filter  (< 0.55 → dropped)  │
-  │    │  • Greeting intercept (hello/हेलो → skip LLM)│
-  │    │  • Barge-in detection (≥ 2-word interim)  │
+  │    │  Transcript Processing                     │
+  │    │  • Confidence filter  (< 0.65 → dropped)  │
+  │    │  • Barge-in detection (Immediate stop)     │
   │    └────┬──────────────────────────────────────┘
-  │         │  final transcript
-  │         ▼
-  │    Sarvam 30B LLM  (sarvam-30b, streaming, tool calling)
+  │         │  
+  │    Sarvam 30B LLM  (Streaming, Tool calling)
   │         │
   │    ┌────┴───────────────────────────────────────────┐
   │    │  Tool execution (pharmacy_functions.py)         │
   │    │  • check_available_slots → Google Calendar      │
   │    │  • book_appointment   → Sheets + Calendar + Email│
-  │    │  • cancel_appointment → Sheets + Calendar        │
-  │    │  • reschedule_appointment → cancel + re-book    │
   │    └────┬───────────────────────────────────────────┘
-  │         │  Hindi text response
-  │         ▼
-  │    Sarvam Bulbul v2 TTS  (bulbul:v2, hi-IN, 8 kHz mulaw)
+  │         │  
+  │    Sarvam Bulbul v2 TTS  (Natural Hindi Voice)
   │         │
   └─────────┤
             ▼
-     Vobiz WebSocket  (playAudio event → phone speaker)
+     Vobiz WebSocket (playAudio)
 ```
 
 | Component | Technology |
 |---|---|
-| STT | Deepgram **Nova-3** — WebSocket, `language=hi`, mulaw 8 kHz, interim results |
-| LLM | Sarvam **sarvam-30b** — OpenAI-compatible API, streaming, function calling |
-| TTS | Sarvam **Bulbul v2** — `bulbul:v2`, `hi-IN`, 8 kHz mulaw output |
-| Language | Hindi (Devanagari) — never transliteration |
-| Barge-in | Interim transcript ≥ 2 words cancels in-flight TTS task |
-| Keep-alive | 20 ms silence sent every 0.8 s to prevent Vobiz hangup |
+| **STT** | Deepgram **Nova-3** — Optimized for Indian accents and Hinglish. |
+| **LLM** | Sarvam **sarvam-30b** — Best-in-class Hindi reasoning. |
+| **TTS** | Sarvam **Bulbul v2** — Human-like Hindi voice. |
+| **Barge-in** | Low-latency interruption handling (Priya stops talking the moment you do). |
 
 ---
 
-## Pipeline B — Google Gemini Multimodal Live
+## 🚀 Pipeline B — Google Gemini (Low Latency)
 
 ```
 Vobiz WebSocket (mulaw 8 kHz)
   │
-  ├──► upsample 8kHz → 16kHz ──► Gemini BidiGenerateContent WebSocket
-  │                                   │  (STT + LLM + TTS in one connection)
+  ├──► Upsample 8kHz → 16kHz ──► Gemini Live WebSocket
+  │                                   │  (STT + LLM + TTS in one)
   │                                   │  tool calls → pharmacy_functions.py
-  │                                   │  audio output (PCM 24 kHz)
-  │         downsample 24kHz → 8kHz ◄─┘
-  │         + audioop.mul amplify
+  │         Downsample 24kHz → 8kHz ◄─┘
   └─────────────────────────────────►  Vobiz WebSocket (playAudio)
 ```
 
 | Component | Technology |
 |---|---|
-| Model | Gemini **gemini-3.1-flash-live-preview** |
-| Voice | Aoede (built-in Gemini voice) |
-| Protocol | BidiGenerateContent WebSocket (`v1beta`) |
-| Audio in | mulaw 8 kHz → PCM 16 kHz (upsample via `audioop.ratecv`) |
-| Audio out | PCM 24 kHz → mulaw 8 kHz (downsample + 1.4× amplify) |
-| Advantage | Lowest latency — single WebSocket, no pipeline stages |
+| **Model** | Gemini **3.1 Flash Live** |
+| **Voice** | Aoede (Native Gemini Voice) |
+| **Advantage** | Native multimodal support for fastest possible response times. |
 
 ---
 
-## Call Flow (Sarvam Pipeline — Full Sequence)
+## 📅 Smart Booking Logic
+
+*   **Real-time Availability**: Checks your Google Calendar for current bookings before offering slots.
+*   **Natural Time Parsing**: Understands "साढ़े छह" (6:30), "परसों" (day after tomorrow), and "कल सुबह" (tomorrow morning).
+*   **Name Correction**: If a parent says "नहीं, बच्चे का नाम कबीर है" (No, the child's name is Kabir), Priya immediately updates the record.
+*   **One-Slot Policy**: Offers the best available slot first to minimize conversation time.
+*   **Past-Time Guard**: Never books an appointment for a time that has already passed.
+
+---
+
+## 📊 Knowledge Base (New!)
+
+You can now upload **Clinic PDFs, Doctor Lists, or Fee Structures** via the dashboard. Priya will automatically read these documents and use them to answer caller questions accurately without any extra training.
+
+---
+
+## 📈 Dashboard & Monitoring
+
+The built-in dashboard provides:
+*   **Live Provider Switching**: Toggle between Sarvam and Gemini instantly.
+*   **Knowledge Base Manager**: Upload and manage your clinic's documentation.
+*   **Cost Analysis**: Track every cent spent on STT, LLM, and TTS.
+*   **Call Recordings**: Listen to stereo recordings (Caller on Left, Priya on Right).
+*   **Latency Metrics**: Monitor Time-to-First-Token (TTFT) and end-to-end response times.
+
+---
+
+## 🛠️ Project Structure
 
 ```
-1. Phone rings → Vobiz fires POST /answer
-2. Server checks active_provider → redirects to /sarvam-stream WebSocket
-3. Deepgram WebSocket opened → keep-alive loop starts
-4. Priya speaks greeting: "नमस्ते! नेहा चाइल्ड केयर में आपका स्वागत है..."
-5. Caller speaks → Deepgram streams interim transcripts
-     └─ Confidence < 0.55  → dropped (ambient noise filter)
-     └─ Single greeting word → "जी, बताइए।" (no LLM needed)
-     └─ ≥ 2 words interim, Priya is speaking → BARGE-IN: cancel TTS task
-6. Final transcript arrives → handle_transcript()
-     └─ is_responding = True  (queue any new transcript until done)
-     └─ History appended → LLM streamed
-7. LLM streams response text + optional tool_call
-     └─ Text sentences flushed sentence-by-sentence to TTS
-     └─ speak() called: TTS → PCM → recorder.write_priya() → mulaw → WebSocket
-     └─ asyncio.sleep(playback_secs) holds is_speaking=True for barge-in window
-8. Tool call detected → execute IMMEDIATELY (no extra LLM round-trip):
-     check_available_slots → direct slot-offer reply (skip second LLM call)
-     book_appointment      → scripted confirmation from tool result
-     cancel_appointment    → if followup LLM wants book_appointment, execute it
-                             (name-correction rebook — no user re-confirmation needed)
-9. Booking guard: book_appointment only fires if last user turn ∈ CONFIRMATION_WORDS
-10. Past-time guard: book_appointment rejects slots where appt_dt ≤ now()
-11. Call ends → finally block:
-     → wait for in-flight speak_task (up to 3 s) before saving recording
-     → _TimelineRecorder.save() → stereo WAV (caller left, Priya right)
-     → send_call_summary_email() with full transcript
-     → store.end_call() → metrics logged
+app.py                    — Main Server (aiohttp)
+app_config.json           — Persona, Clinic Hours, and Prompts
+pharmacy_functions.py     — Core Tools (Booking, Calendar, Sheets)
+knowledge_base/           — Uploaded documents for AI context
+recordings/               — Stereo call recordings
+metrics/                  — Performance and cost tracking
 ```
-
----
-
-## Booking Flow (LLM Rules)
-
-```
-Step 1 — Extract NAME and REASON from conversation history
-          • Any symptom mentioned = REASON — never ask again
-          • Any child name mentioned = NAME — never ask again
-          • Name correction "X नहीं Y है" → use Y (latest name wins)
-          → BOTH known: skip to Step 2
-          → Only one known: ask for the missing one only
-          → Neither known: ask both in one question
-
-Step 2 — call check_available_slots(preferred_day='Today')
-          Never ask caller for day — use REAL-TIME clock
-
-Step 3 — Offer ONE slot: "क्या [time_hi] का समय ठीक रहेगा?"
-          If no → offer next slot
-
-Step 4 — ONLY after explicit YES → call book_appointment
-          YES words: हाँ, ठीक है, ठीक रहेगा, okay, हो जाए, बिल्कुल, चलेगा, ...
-
-Step 5 — book_appointment runs concurrently:
-          Google Sheets append + Calendar event + Email with .ics
-
-Step 6 — Speak confirmation_message from tool result verbatim
-```
-
-**Name-correction rebook:** If the caller corrects the name after a booking, Priya calls `cancel_appointment` for the old name and **immediately** calls `book_appointment` with the corrected name, same reason, same slot — no re-confirmation needed.
-
----
-
-## Google Sheets Column Layout
-
-Every booking appends one row to `Sheet1`:
-
-| Column | Field | Example |
-|--------|-------|---------|
-| A | Patient Name | Trishna |
-| B | Patient Problems | बुखार |
-| C | Parents Name | Guardian |
-| D | Is appointment Booked | Yes / Cancelled |
-| E | Booking time | 2026-04-15 10:20 |
-| F | Child Age | 5 |
-| G | Booking Slot | 10:20 AM |
-| H | Contact Number | 917042915552 |
-
-`cancel_appointment` marks column D as "Cancelled" and deletes the Google Calendar event.
-
----
-
-## Recording — Stereo Timeline WAV
-
-Every call produces a stereo `.wav` saved to `recordings/`:
-
-```
-Left channel  = caller audio  (mulaw decoded, 8 kHz PCM)
-Right channel = Priya audio   (TTS PCM before mulaw encoding)
-Sample rate   = 8000 Hz
-Bit depth     = 16-bit PCM LE
-```
-
-`_TimelineRecorder` uses wall-clock timestamps to place each audio chunk at its real position — no overlaps, no silence gaps. The `finally` block waits up to 3 seconds for any in-flight TTS task to finish writing before saving.
-
----
-
-## Emails Sent
-
-| Trigger | Subject | Content |
-|---------|---------|---------|
-| Booking confirmed | `Appointment Booked: {patient_name}` | Details + .ics calendar invite |
-| Call ends | `Call Summary: Neha Child Care` | Caller ID, duration, full transcript |
-
----
-
-## Performance & Logic Tuning
-
-The agent has been optimized for "World Class" speed and accuracy to handle clinical stress:
-
-### 1. Speed (Latency)
--   **Parallel TTS**: Switched from serial (Wait for TTS to finish) to parallel (Start TTS immediately). Priya starts speaking as soon as the first sentence is generated.
--   **Aggressive Endpointing**: Reduced `utterance_end_ms` to **1000ms** (from 1500ms). This cuts the response delay by nearly half a second.
--   **Calendar Caching**: `check_available_slots` caches Google Calendar results for **30 seconds**. Subsequent checks within the same turn are instantaneous (<50ms).
--   **Short Scripts**: Reduced wording in greetings and confirmations to minimize audio generation time.
-
-### 2. Logic & Reliability
--   **Strict Confirmation Guard**: `book_appointment` will **NEVER** fire based on an assumption. It requires an explicit 'Yes' (Haan, Theek hai, Okay) first.
--   **Hallucination Shield**: Priya is strictly forbidden from talking about non-clinic topics (interests, fees, etc.). She redirect all "weird" STT transcrips back to appointment booking.
--   **One-Slot Policy**: To keep conversations fast, she offers only **one** best slot at a time instead of long lists.
--   **Barge-in Sensitivity**: Threshold set to **100ms**. If you speak, Priya stops "Thinking" and "Talking" immediately to listen to you.
--   **VAD confidence**: STT confidence threshold raised to **65%** to filter out fan noise or background TV.
-
----
-
-## Key Design Patterns
-
-| Pattern | Implementation |
-|---------|---------------|
-| **Barge-in** | Interim transcript ≥ 2 words → `speak_task.cancel()` + `clearAudio` event |
-| **Noise filter** | Deepgram confidence < 0.55 → transcript dropped |
-| **Greeting shortcut** | Single-word greetings (hello/नमस्ते) → hardcoded reply, no LLM |
-| **Direct slot reply** | After `check_available_slots`, slot offer built in Python — no second LLM call |
-| **Scripted booking confirm** | Confirmation text comes from `tool.result.confirmation_message`, not LLM |
-| **Followup tool execution** | After `cancel_appointment`, if LLM returns `book_appointment` in followup → executed immediately |
-| **Booking guard** | `book_appointment` only executes if previous user turn is in `CONFIRMATION_WORDS` |
-| **Past-time guard** | `book_appointment` rejects `appt_dt ≤ datetime.now()` |
-| **Repeat-caller detection** | `APPOINTMENTS_DB` checked at call start — existing booking surfaced in system prompt |
-| **Keep-alive** | 20 ms silence sent every 0.8 s to prevent Vobiz from hanging up |
-| **WAV header strip** | TTS returns RIFF WAV — `wave.open(BytesIO)` extracts raw PCM before playback |
-| **ratecv state** | `audioop.ratecv()` state preserved across chunks — no resampling artifacts |
+state** | `audioop.ratecv()` state preserved across chunks — no resampling artifacts |
 | **Concurrent booking** | `ThreadPoolExecutor` runs Sheets + Calendar + Email in parallel (~3× faster) |
 
 ---
@@ -452,7 +340,7 @@ curl -X POST http://localhost:5050/api/set-provider \
 |-----|----------|--------|
 | `DEEPGRAM_API_KEY` | Sarvam (STT) | [deepgram.com](https://deepgram.com) |
 | `SARVAM_API_KEY` | Sarvam (LLM + TTS) | [sarvam.ai](https://www.sarvam.ai) |
-| `GEMINI_API_KEY` | Google | [aistudio.google.com](https://aistudio.google.com) |
+| `GEMINI_API_KEY` | Google | [Google AI](https://ai.google.dev/) |
 | `GOOGLE_CALENDAR_ID` | Both | Google Calendar settings |
 | `GOOGLE_SPREADSHEET_ID` | Both | Google Sheets URL |
 | `GMAIL_APP_PASSWORD` | Both | [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) |

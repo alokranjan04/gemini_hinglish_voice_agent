@@ -26,16 +26,13 @@ GEMINI_WS_URL = (
 
 DG_URL = (
     "wss://api.deepgram.com/v1/listen"
-    "?model=nova-2&language=hi&encoding=mulaw&sample_rate=8000"
+    "?model=nova-2&language=hi-IN&encoding=mulaw&sample_rate=8000"
     "&interim_results=true&utterance_end_ms=1000&vad_events=true"
-    "&endpointing=400&smart_format=true&numerals=true"
-    "&keywords=pet:3,pait:3,dard:3,bukhaar:3,bukhar:3"
-    ",khansi:2,khaansi:2,ulti:2,bimaar:2,thand:2"
-    ",ungli:2,ungliyan:2,pair:2,seene:2,sar:2"
-    ",appointment:3,booking:3,reschedule:3,cancel:3"
-    ",doctor:2,vaccine:2,checkup:2,naam:2,kal:2,aaj:2"
-    ",nilesh:3,neelesh:3,shubham:3,rohan:2,priya:2,ananya:2"
-    ",arjun:2,ishaan:2,aanya:2,vivaan:2,kavya:2,aditya:2"
+    "&endpointing=400&smart_format=true&numerals=true&filler_words=true"
+    "&keywords=mujhe:4,bache:4,bachon:4,dikhaana:4,appointment:5,booking:5,book:5"
+    ",fever:4,bukhaar:4,bukhar:4,pait:4,dard:4,khansi:4,khaansi:4,ulti:4,bukhaar:4"
+    ",doctor:4,clinic:4,naam:4,umar:4,saal:4,kal:4,aaj:4,subah:4,shaam:4,ira:5,aira:5,ayra:5"
+    ",nilesh:3,neelesh:3,shubham:3,rohan:3,priya:3,ananya:3,vaccine:3,checkup:3"
 )
 
 # ── App config (runtime-mutable: provider switching writes back to disk) ──────

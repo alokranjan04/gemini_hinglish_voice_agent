@@ -43,12 +43,19 @@ async def _sarvam_tts(text: str) -> str | None:
         "model": "bulbul:v2",
     }
     try:
+        timeout = aiohttp.ClientTimeout(total=5, connect=2)
         async with get_http().post(
             SARVAM_TTS_URL, json=payload,
             headers={"api-subscription-key": SARVAM_API_KEY},
+            timeout=timeout
         ) as r:
-            return (await r.json())["audios"][0] if r.status == 200 else None
-    except Exception:
+            if r.status != 200:
+                print(f"❌ [TTS ERROR] Status {r.status}: {await r.text()}")
+                return None
+            res = await r.json()
+            return res["audios"][0]
+    except Exception as e:
+        print(f"❌ [TTS EXCEPTION] {e}")
         return None
 
 
@@ -59,11 +66,12 @@ async def _sarvam_stream_once(messages: list):
     Tool schemas are read from APP_CONFIG so they can be updated without code changes.
     """
     headers   = {"Content-Type": "application/json", "api-subscription-key": SARVAM_API_KEY}
+    params    = APP_CONFIG.get("parameters", {}).get("sarvam", {})
     payload   = {
-        "model": "sarvam-30b",
+        "model": params.get("model", "sarvam-30b"),
         "messages": messages,
         "tools": APP_CONFIG["tools"]["sarvam"],
-        "temperature": 0.1,
+        "temperature": params.get("temperature", 0.1),
         "stream": True,
     }
     timeout   = aiohttp.ClientTimeout(total=8, sock_read=8)
@@ -72,51 +80,58 @@ async def _sarvam_stream_once(messages: list):
         async with get_http().post(
             SARVAM_CHAT_URL, json=payload, headers=headers, timeout=timeout
         ) as r:
-            ct = r.headers.get("Content-Type", "")
-            if "application/json" in ct:
+            # 1. Handle non-streaming fallback
+            if "application/json" in r.headers.get("Content-Type", ""):
                 data = await r.json()
-                msg  = data["choices"][0]["message"]
-                if msg.get("content"):
-                    yield ("text", msg["content"])
-                for tc in msg.get("tool_calls", []):
-                    yield ("tool", tc)
+                if "choices" in data:
+                    msg = data["choices"][0]["message"]
+                    if msg.get("content"):
+                        yield "text", msg["content"]
+                    for tc in msg.get("tool_calls", []):
+                        yield "tool", tc.get("function", tc)
                 return
-            async for raw in r.content:
-                line = raw.decode("utf-8").strip()
-                if not line.startswith("data: "):
+
+            # 2. Handle SSE stream
+            async for line_b in r.content:
+                line = line_b.decode("utf-8").strip()
+                if not line or not line.startswith("data:"):
                     continue
-                s = line[6:]
-                if s == "[DONE]":
+                
+                payload = line[5:].strip()
+                if payload == "[DONE]":
                     break
+                
                 try:
-                    chunk = json.loads(s)
-                    delta = chunk["choices"][0]["delta"]
-                    if delta.get("content"):
-                        yield ("text", delta["content"])
-                    for tc in delta.get("tool_calls", []):
-                        i = tc.get("index", 0)
-                        if i not in tool_bufs:
-                            tool_bufs[i] = {"id": "", "name": "", "arguments": ""}
-                        if tc.get("id"):
-                            tool_bufs[i]["id"] = tc["id"]
-                        fn = tc.get("function", {})
-                        if fn.get("name"):
-                            tool_bufs[i]["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            tool_bufs[i]["arguments"] += fn["arguments"]
-                except Exception:
-                    pass
+                    data = json.loads(payload)
+                    if not data.get("choices"): continue
+                    
+                    delta = data["choices"][0].get("delta", {})
+                    
+                    # A. Handle Text
+                    if "content" in delta and delta["content"]:
+                        yield "text", delta["content"]
+                    
+                    # B. Handle Tool Call Chunks
+                    if "tool_calls" in delta:
+                        for tc in delta["tool_calls"]:
+                            idx = tc.get("index", 0)
+                            if idx not in tool_bufs:
+                                tool_bufs[idx] = {"name": "", "arguments": ""}
+                            
+                            fn = tc.get("function", {})
+                            if fn.get("name"):
+                                tool_bufs[idx]["name"] += fn["name"]
+                            if fn.get("arguments"):
+                                tool_bufs[idx]["arguments"] += fn["arguments"]
+                except json.JSONDecodeError:
+                    continue
     except Exception as e:
-        print(f"[STREAM ERROR] {e}")
+        print(f"❌ [SARVAM ERROR] stream_once: {e}")
         reset_http()
-        return
-    for i in sorted(tool_bufs):
-        buf = tool_bufs[i]
-        if buf["name"]:
-            yield ("tool", {
-                "id": buf["id"], "type": "function",
-                "function": {"name": buf["name"], "arguments": buf["arguments"]},
-            })
+    
+    # 3. Yield buffered tools
+    for idx in sorted(tool_bufs.keys()):
+        yield "tool", tool_bufs[idx]
 
 
 async def _sarvam_stream(messages: list):
@@ -169,10 +184,28 @@ async def sarvam_handler(request):
         )
         caller_ctx = "\n\n" + ctx_tmpl.format(bookings=booking_strs)
 
+    # ── Load Knowledge Base ────────────────────────────────────────────────
+    kb_content = ""
+    kb_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "knowledge_base")
+    if os.path.exists(kb_dir):
+        for f in os.listdir(kb_dir):
+            if f.endswith(".extracted.txt"):
+                try:
+                    with open(os.path.join(kb_dir, f), "r", encoding="utf-8") as kb_file:
+                        kb_content += f"\n--- DOCUMENT: {f.replace('.extracted.txt', '')} ---\n"
+                        kb_content += kb_file.read() + "\n"
+                except Exception:
+                    pass
+    
+    kb_prompt = ""
+    if kb_content:
+        kb_prompt = f"\n\nKNOWLEDGE BASE (Use this to answer questions accurately):\n{kb_content}"
+
     system_instructions = (
         f"{APP_CONFIG['agent']['system_prompt']}\n\n"
         f"REAL-TIME: {now.strftime('%I:%M %p')} on {now.strftime('%A')}."
         f"{caller_ctx}\n\n"
+        f"{kb_prompt}\n\n"
         f"{APP_CONFIG['prompts']['sarvam_rules']}"
     )
     history = [{"role": "system", "content": system_instructions}]
@@ -236,7 +269,7 @@ async def sarvam_handler(request):
                 is_speaking = False
 
     async def handle_transcript(transcript: str):
-        nonlocal is_responding, speak_task, pending_transcript
+        nonlocal is_responding, speak_task, pending_transcript, history
 
         if is_responding:
             pending_transcript = transcript
@@ -257,6 +290,10 @@ async def sarvam_handler(request):
         try:
             print(f"👤 User: {transcript}")
             history.append({"role": "user", "content": transcript})
+        
+        # Keep history manageable (System prompt + last 20 turns)
+        if len(history) > 21:
+            history = [history[0]] + history[-20:]
             if call_metrics:
                 call_metrics.record_turn("user", transcript)
 
@@ -281,7 +318,10 @@ async def sarvam_handler(request):
                 if not s:
                     return
                 # Block sentences that are clearly tool-call artifacts leaking into TTS
-                if any(t in s.lower() for t in _HALLUC_TOKENS):
+                # We catch both underscore and space versions (e.g. 'preferred_day' and 'preferred day')
+                _halluc_lower = s.lower()
+                if any(t in _halluc_lower for t in _HALLUC_TOKENS) or \
+                   any(t.replace("_", " ") in _halluc_lower for t in _HALLUC_TOKENS):
                     print(f"[SPEAK BLOCKED] Tool artifact: {s[:60]!r}")
                     return
                 # FIRE-AND-FORGET: Don't 'await' the speak_task in the loop.
@@ -370,6 +410,7 @@ async def sarvam_handler(request):
                     args = json.loads(tc["function"]["arguments"])
                     if fn == "book_appointment":
                         if not args.get("preferred_day"):  args["preferred_day"]  = "Today"
+                        if not args.get("reason"):         args["reason"]         = "General Checkup"
                         args.update({"patient_age": "5", "parent_name": "Guardian",
                                      "contact_number": caller_id})
                         # ── Time: normalise Hindi → English then scan history ─
@@ -439,6 +480,8 @@ async def sarvam_handler(request):
                         elif any(w in recent_user for w in ["कल", "kal", "tomorrow"]):
                             args["preferred_day"] = "Tomorrow"
                             print(f"[DAY OVERRIDE] User said कल → Tomorrow")
+                        if not args.get("preferred_day"):
+                            args["preferred_day"] = "Today"
 
                     print(f"🔧 Tool: {fn}({args})")
                     t_tool = time.time()
@@ -446,7 +489,16 @@ async def sarvam_handler(request):
                     _tool_task = asyncio.create_task(asyncio.to_thread(FUNCTION_MAP[fn], **args))
                     if speak_task and not speak_task.done():
                         await speak_task
-                    res = await _tool_task
+                    
+                    try:
+                        res = await _tool_task
+                        if not is_responding:
+                            print(f"🛑 [TOOL ABORT] Interrupted during {fn}")
+                            return
+                    except Exception as te:
+                        print(f"❌ [TOOL EXCEPTION] {fn}: {te}")
+                        res = {"error": "failed"}
+                    
                     turn_tool_ms = int((time.time() - t_tool) * 1000)
                     if call_metrics:
                         call_metrics.record_tool_call(fn, args, res, turn_tool_ms)
@@ -714,7 +766,7 @@ async def sarvam_handler(request):
                     call_metrics.deepgram_confidences.append(round(conf * 100, 1))
                 
                 # REJECT noise: Fan noise usually has low confidence.
-                if conf is not None and conf < 0.65:
+                if conf is not None and conf < 0.4:
                     if len(tr.split()) < 2:
                         continue # ignore low-conf single-word noise
                 
@@ -722,23 +774,31 @@ async def sarvam_handler(request):
                 if len(tr.split()) == 1 and JUNK_RE.match(tr):
                     continue
 
-                if not d.get("is_final", False):
+                is_final = d.get("is_final", False)
+                if not is_final:
                     partial_hyp = tr
                     print(f"\r〰  {tr}          ", end="", flush=True)
-                    # AGGRESSIVE INTERRUPT: user just needs 2 words to stop the bot!
-                    if (is_speaking or is_responding) and len(tr.split()) >= 2:
-                        print(f"\n🚫 [BARGE-IN] User detected: {tr!r}")
-                        is_responding = False # Stops the LLM loop
-                        if call_metrics:
-                            call_metrics.record_interruption()
-                        if speak_task and not speak_task.done():
-                            speak_task.cancel()
-                        asyncio.create_task(clear_audio())
                 else:
-                    # Final transcript: trigger new intent
+                    partial_hyp = ""
+
+                # ── BARGE-IN CHECK ──
+                # If user speaks even 1 word while bot is thinking or talking, abort immediately.
+                if (is_speaking or is_responding) and len(tr.split()) >= 1:
+                    print(f"\n🚫 [BARGE-IN] User detected: {tr!r}")
+                    is_responding = False # Stops current LLM turn
+                    if call_metrics:
+                        call_metrics.record_interruption()
+                    if speak_task and not speak_task.done():
+                        speak_task.cancel()
+                    asyncio.create_task(clear_audio())
+
+                # ── FINAL TRANSCRIPT HANDLING ──
+                if is_final:
                     if len(tr.split()) >= 1:
-                        partial_hyp = ""
                         asyncio.create_task(handle_transcript(tr))
+                    else:
+                        # Empty final transcript: could be silence after SpeechStarted
+                        pass
         except Exception as e:
             print(f"❌ [DEEPGRAM ERROR] Receiver died: {e}")
             traceback.print_exc()
@@ -761,10 +821,27 @@ async def sarvam_handler(request):
                     sid = (data.get("streamSid") or data.get("streamId")
                            or data.get("start", {}).get("streamSid")
                            or data.get("start", {}).get("streamId"))
-                    print(f"--- [SARVAM]: Started {sid} ---")
+                    print(f"🚀 [SESSION START] SID: {sid}")
                     call_metrics = store.start_call(sid, "sarvam", caller_id)
                     poll_task    = asyncio.create_task(resource_poller(call_metrics))
-                    asyncio.create_task(speak(APP_CONFIG["scripts"]["greeting"]))
+                    
+                    async def do_greeting():
+                        nonlocal is_responding, speak_task, pending_transcript
+                        is_responding = True
+                        try:
+                            # Assign to speak_task so barge-in can cancel it
+                            speak_task = asyncio.create_task(speak(APP_CONFIG["scripts"]["greeting"]))
+                            await speak_task
+                        except asyncio.CancelledError:
+                            print("🚫 [BARGE-IN] Greeting cancelled")
+                        finally:
+                            is_responding = False
+                            if pending_transcript:
+                                pt, pending_transcript = pending_transcript, None
+                                print(f"▶️  [REPLAY GREETING INTERRUPT]: {pt}")
+                                asyncio.create_task(handle_transcript(pt))
+
+                    asyncio.create_task(do_greeting())
                 elif data.get("event") == "media" and sid and dg_ws:
                     raw = base64.b64decode(data["media"]["payload"])
                     await dg_ws.send(raw)

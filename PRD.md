@@ -1,5 +1,5 @@
 # Product Requirements Document (PRD)
-# Priya — AI Voice Receptionist for Neha Child Care
+# Priya: AI Clinic Receptionist — Solving the Missed Call Problem
 
 **Product:** Priya Voice AI  
 **Version:** 1.0 — Production  

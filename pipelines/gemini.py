@@ -40,20 +40,40 @@ async def gemini_handler(request):
         "greeting",
         "नमस्ते! नेहा चाइल्ड केयर में आपका स्वागत है। मैं प्रिया बोल रही हूँ।",
     )
+    # ── Load Knowledge Base ────────────────────────────────────────────────
+    kb_content = ""
+    kb_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "knowledge_base")
+    if os.path.exists(kb_dir):
+        for f in os.listdir(kb_dir):
+            if f.endswith(".extracted.txt"):
+                try:
+                    with open(os.path.join(kb_dir, f), "r", encoding="utf-8") as kb_file:
+                        kb_content += f"\n--- DOCUMENT: {f.replace('.extracted.txt', '')} ---\n"
+                        kb_content += kb_file.read() + "\n"
+                except Exception:
+                    pass
+    
+    kb_prompt = ""
+    if kb_content:
+        kb_prompt = f"\n\nKNOWLEDGE BASE (Use this to answer questions accurately):\n{kb_content}"
+
     system_prompt = (
         f"{APP_CONFIG['agent']['system_prompt']}\n\n"
         f"REAL-TIME: {date_str}. Caller: {caller_id}.\n\n"
         f"CALL START: When you receive [CALL_START], say this greeting EXACTLY "
         f"and NOTHING ELSE:\n'{greeting_text}'\n\n"
+        f"{kb_prompt}\n\n"
         f"{APP_CONFIG['prompts']['gemini_rules']}"
     )
 
     try:
         async with websockets.connect(GEMINI_WS_URL) as gemini_ws:
+            params = APP_CONFIG.get("parameters", {}).get("google", {})
             setup_msg = {
                 "setup": {
-                    "model": "models/gemini-3.1-flash-live-preview",
+                    "model": params.get("model", "models/gemini-3.1-flash-live-preview"),
                     "generationConfig": {
+                        "temperature": params.get("temperature", 0.1),
                         "responseModalities": ["AUDIO"],
                         "speechConfig": {
                             "voiceConfig": {
