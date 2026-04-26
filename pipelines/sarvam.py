@@ -841,6 +841,8 @@ async def sarvam_handler(request):
         dg_ws = await websockets.connect(
             DG_URL,
             additional_headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"},
+            ping_interval=20,
+            ping_timeout=20
         )
         asyncio.create_task(dg_receiver())
         asyncio.create_task(dg_keep_alive())
@@ -875,9 +877,14 @@ async def sarvam_handler(request):
 
                     asyncio.create_task(do_greeting())
                 elif data.get("event") == "media" and sid and dg_ws:
-                    raw = base64.b64decode(data["media"]["payload"])
-                    await dg_ws.send(raw)
-                    recorder.write_caller(audioop.ulaw2lin(raw, 2))
+                    try:
+                        raw = base64.b64decode(data["media"]["payload"])
+                        if not dg_ws.closed:
+                            await dg_ws.send(raw)
+                        recorder.write_caller(audioop.ulaw2lin(raw, 2))
+                    except Exception as e:
+                        print(f"⚠️ [DG SEND ERROR]: {e}")
+                        break # Exit main loop to disconnect call gracefully if STT fails
 
     except Exception as e:
         print(f"❌ [HANDLER CRASH] {e}")

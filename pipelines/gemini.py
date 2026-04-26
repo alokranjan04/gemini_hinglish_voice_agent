@@ -67,7 +67,7 @@ async def gemini_handler(request):
     )
 
     try:
-        async with websockets.connect(GEMINI_WS_URL) as gemini_ws:
+        async with websockets.connect(GEMINI_WS_URL, ping_interval=20, ping_timeout=20) as gemini_ws:
             params = APP_CONFIG.get("parameters", {}).get("google", {})
             setup_msg = {
                 "setup": {
