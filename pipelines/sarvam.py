@@ -259,12 +259,11 @@ async def sarvam_handler(request):
                 if not ws.closed:
                     mulaw = audioop.lin2ulaw(pcm, 2)
                     await ws.send_str(json.dumps({
-                        "event": "playAudio", "streamId": sid,
+                        "event": "playAudio",
+                        "streamId": sid,
                         "media": {
-                            "contentType": "audio/x-mulaw",
-                            "sampleRate": 8000,
-                            "payload": base64.b64encode(mulaw).decode("utf-8"),
-                        },
+                            "payload": base64.b64encode(mulaw).decode("utf-8")
+                        }
                     }))
                     await asyncio.sleep(len(mulaw) / 8000.0)
             finally:
