@@ -730,7 +730,7 @@ async def sarvam_handler(request):
         silence_mulaw = audioop.lin2ulaw(b"\x00" * 160, 2)
         silence_b64   = base64.b64encode(silence_mulaw).decode("utf-8")
         while not ws.closed:
-            if sid:
+            if sid and not is_speaking:
                 try:
                     await ws.send_str(json.dumps({
                         "event": "playAudio", "streamId": sid,
@@ -738,7 +738,7 @@ async def sarvam_handler(request):
                     }))
                 except Exception:
                     pass
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(5.0) # Increased from 0.8s to be less intrusive
 
     async def dg_keep_alive():
         """Send Deepgram KeepAlive text frame every 5 s.
@@ -851,10 +851,16 @@ async def sarvam_handler(request):
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(msg.data)
-                if data.get("event") == "start":
-                    sid = (data.get("streamSid") or data.get("streamId")
-                           or data.get("start", {}).get("streamSid")
-                           or data.get("start", {}).get("streamId"))
+                
+                # Aggressive SID extraction (Vobiz sometimes puts it in different places)
+                current_id = (
+                    data.get("streamId") or data.get("streamSid") or
+                    data.get("start", {}).get("streamId") or
+                    data.get("start", {}).get("streamSid") or
+                    data.get("media", {}).get("streamId") # Some versions put it here
+                )
+                if current_id and not sid:
+                    sid = current_id
                     print(f"🚀 [SESSION START] SID: {sid}")
                     call_metrics = store.start_call(sid, "sarvam", caller_id)
                     poll_task    = asyncio.create_task(resource_poller(call_metrics))
@@ -863,7 +869,6 @@ async def sarvam_handler(request):
                         nonlocal is_responding, speak_task, pending_transcript
                         is_responding = True
                         try:
-                            # Assign to speak_task so barge-in can cancel it
                             speak_task = asyncio.create_task(speak(APP_CONFIG["scripts"]["greeting"]))
                             await speak_task
                         except asyncio.CancelledError:
@@ -876,7 +881,8 @@ async def sarvam_handler(request):
                                 asyncio.create_task(handle_transcript(pt))
 
                     asyncio.create_task(do_greeting())
-                elif data.get("event") == "media" and sid and dg_ws:
+
+                if data.get("event") == "media" and sid and dg_ws:
                     try:
                         raw = base64.b64decode(data["media"]["payload"])
                         if not dg_ws.closed:

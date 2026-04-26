@@ -26,7 +26,7 @@ GEMINI_WS_URL = (
 
 DG_URL = (
     "wss://api.deepgram.com/v1/listen"
-    "?model=nova-3&language=hi-IN&encoding=mulaw&sample_rate=8000"
+    "?model=nova-2&language=hi-IN&encoding=mulaw&sample_rate=8000"
     "&interim_results=true&utterance_end_ms=1000&vad_events=true"
     "&endpointing=400&smart_format=true&numerals=true&filler_words=true"
     "&keywords=mujhe:4,bache:4,bachon:4,dikhaana:4,appointment:5,booking:5,book:5"
