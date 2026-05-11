@@ -305,15 +305,13 @@ async def sarvam_handler(request):
         try:
             print(f"👤 User: {transcript}")
             history.append({"role": "user", "content": transcript})
-        
-        # Keep history manageable (System prompt + last 20 turns)
-        if len(history) > 21:
-            history = [history[0]] + history[-20:]
+
+            # Keep history manageable (System prompt + last 20 turns)
+            if len(history) > 21:
+                history = [history[0]] + history[-20:]
+
             if call_metrics:
                 call_metrics.record_turn("user", transcript)
-
-            if len(history) > 24:
-                history[1:] = history[-23:]
 
             t_llm      = time.time()
             full_text  = ""
@@ -327,19 +325,33 @@ async def sarvam_handler(request):
                 "patient_name", "preferred_time", "preferred_day",
             })
 
-            async def flush_sent(s: str):
+            _seen_sentences = set()
+            _rep_count = 0
+
+            async def flush_sent(s: str) -> bool:
+                nonlocal _rep_count
                 s = s.strip()
                 if not s:
-                    return
+                    return True
                 # Block sentences that are clearly tool-call artifacts leaking into TTS
                 # We catch both underscore and space versions (e.g. 'preferred_day' and 'preferred day')
                 _halluc_lower = s.lower()
                 if any(t in _halluc_lower for t in _HALLUC_TOKENS) or \
                    any(t.replace("_", " ") in _halluc_lower for t in _HALLUC_TOKENS):
                     print(f"[SPEAK BLOCKED] Tool artifact: {s[:60]!r}")
-                    return
+                    return True
+                
+                if s in _seen_sentences:
+                    _rep_count += 1
+                    print(f"[SPEAK BLOCKED] Repetition: {s[:40]!r}")
+                    if _rep_count >= 2:
+                        return False # Abort stream
+                    return True
+                
+                _seen_sentences.add(s)
                 # Queue the sentence for the worker
                 await speak_queue.put(s)
+                return True
             
             # Start a fresh worker for this turn if needed
             if worker_task is None or worker_task.done():
@@ -359,8 +371,13 @@ async def sarvam_handler(request):
                     full_text += val
                     sent_buf  += val
                     parts = SENT_RE.split(sent_buf)
+                    abort_stream = False
                     for p in parts[:-1]:
-                        await flush_sent(p)
+                        if not await flush_sent(p):
+                            abort_stream = True
+                    if abort_stream:
+                        print("🛑 [LLM ABORT] Repetition loop detected, stopping stream early")
+                        break
                     sent_buf = parts[-1]
                 elif kind == "tool":
                     tool_calls.append(val)
@@ -377,8 +394,16 @@ async def sarvam_handler(request):
 
             # ── Hallucination guard ─────────────────────────────────────────
             if full_text and not tool_calls:
-                hall_triggers = {"patient_name", "preferred_day", "preferred_time", "arg_key"}
-                if any(k in full_text.lower() for k in hall_triggers):
+                hall_triggers = {
+                    "patient_name", "preferred_day", "preferred_time", "arg_key",
+                    "check_available_slots", "book_appointment", "cancel_appointment", "reschedule_appointment"
+                }
+                
+                if "schedule check" in full_text.lower():
+                    print("[FORCE TOOL] Auto-triggering check_available_slots from text")
+                    tool_calls = [{"id": "force_slots", "type": "function", "function": {"name": "check_available_slots", "arguments": "{}"}}]
+                
+                if not tool_calls and any(k in full_text.lower() for k in hall_triggers):
                     print(f"⚠ [HALLUC] Detected: {full_text[:80]}")
                     if call_metrics:
                         call_metrics.record_hallucination()
@@ -408,6 +433,13 @@ async def sarvam_handler(request):
                                                "function": {"name": fn_name, "arguments": json_body}}]
                         except Exception:
                             pass
+                    
+                    if fn_name and not tool_calls:
+                        print(f"[HALLUC→TOOL] Bare function match: {fn_name}")
+                        tool_calls = [{"id": "halluc_bare", "type": "function",
+                                       "function": {"name": fn_name, "arguments": "{}"}}]
+                
+                if tool_calls:
                     full_text = ""
 
             asst: dict = {"role": "assistant", "content": full_text or None}
@@ -653,10 +685,15 @@ async def sarvam_handler(request):
                             followup += val
                             f_buf    += val
                             parts = SENT_RE.split(f_buf)
+                            abort_stream = False
                             for p in parts[:-1]:
                                 if p.strip():
                                     spoke_any = True
-                                await flush_sent(p)
+                                if not await flush_sent(p):
+                                    abort_stream = True
+                            if abort_stream:
+                                print("🛑 [LLM ABORT] Repetition loop detected, stopping stream early")
+                                break
                             f_buf = parts[-1]
                         elif kind == "tool":
                             followup_tools.append(val)
