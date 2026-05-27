@@ -24,9 +24,9 @@ async def handle_answer(request: web.Request) -> web.Response:
     except Exception:
         cid = "Unknown"
 
-    # Force wss:// for all external connections as Vobiz often requires it
-    ws_scheme = "ws" if "localhost" in host else "wss"
-    ws_url = f"{ws_scheme}://{host}{path}?caller_id={cid}"
+    # Server runs plain HTTP — use ws:// (not wss://)
+    # If TLS is needed, terminate it at a reverse proxy (nginx/Caddy) in front.
+    ws_url = f"ws://{host}{path}?caller_id={cid}"
     xml    = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<Response>'
