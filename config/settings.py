@@ -4,7 +4,7 @@ Central settings module.
 All environment variables, API endpoints, and the mutable APP_CONFIG live here.
 Import from this module — never call load_dotenv() or os.getenv() elsewhere.
 """
-import os, json
+import os, json, urllib.parse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,16 +24,28 @@ GEMINI_WS_URL = (
     f".v1beta.GenerativeService.BidiGenerateContent?key={GEMINI_API_KEY}"
 )
 
-DG_URL = (
-    "wss://api.deepgram.com/v1/listen"
-    "?model=nova-2&language=hi-IN&encoding=mulaw&sample_rate=8000"
-    "&interim_results=true&utterance_end_ms=1000&vad_events=true"
-    "&endpointing=400&smart_format=true&numerals=true&filler_words=true"
-    "&keywords=mujhe:4,bache:4,bachon:4,dikhaana:4,appointment:5,booking:5,book:5"
-    ",fever:4,bukhaar:4,bukhar:4,pait:4,dard:4,khansi:4,khaansi:4,ulti:4,bukhaar:4"
-    ",doctor:4,clinic:4,naam:4,umar:4,saal:4,kal:4,aaj:4,subah:4,shaam:4,ira:5,aira:5,ayra:5"
-    ",trishna:10,तृष्णा:10,trisna:10,trushna:10,t-r-i-s-h-n-a:10,trishan:10,t-r-i-s-h-a-n:10,कृष्णा:5,krishna:5"
-)
+_DG_PARAMS = [
+    ("model", "nova-2"),
+    ("language", "hi"),
+    ("encoding", "mulaw"),
+    ("sample_rate", "8000"),
+    ("interim_results", "true"),
+    ("utterance_end_ms", "1000"),
+    ("vad_events", "true"),
+    ("endpointing", "400"),
+    ("smart_format", "true"),
+    ("numerals", "true"),
+    ("filler_words", "true"),
+    ("keywords", (
+        "mujhe:4,bache:4,bachon:4,dikhaana:4,appointment:5,booking:5,book:5,"
+        "fever:4,bukhaar:4,bukhar:4,pait:4,dard:4,khansi:4,khaansi:4,ulti:4,bukhaar:4,"
+        "doctor:4,clinic:4,naam:4,umar:4,saal:4,kal:4,aaj:4,subah:4,shaam:4,ira:5,aira:5,ayra:5,"
+        "trishna:10,तृष्णा:10,trisna:10,trushna:10,t-r-i-s-h-n-a:10,trishan:10,t-r-i-s-h-a-n:10,"
+        "कृष्णा:5,krishna:5"
+    ))
+]
+
+DG_URL = f"wss://api.deepgram.com/v1/listen?{urllib.parse.urlencode(_DG_PARAMS)}"
 
 # ── App config (runtime-mutable: provider switching writes back to disk) ──────
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app_config.json")
