@@ -262,6 +262,8 @@ async def sarvam_handler(request):
                         "event": "playAudio",
                         "streamId": sid,
                         "media": {
+                            "contentType": "audio/x-mulaw",
+                            "sampleRate": 8000,
                             "payload": base64.b64encode(mulaw).decode("utf-8")
                         }
                     }))
