@@ -88,7 +88,7 @@ async def _sarvam_stream_once(messages: list):
                     if msg.get("content"):
                         yield "text", msg["content"]
                     for tc in msg.get("tool_calls", []):
-                        yield "tool", tc.get("function", tc)
+                        yield "tool", tc
                 return
 
             # 2. Handle SSE stream
@@ -131,9 +131,9 @@ async def _sarvam_stream_once(messages: list):
     except Exception as e:
         print(f"❌ [SARVAM ERROR] stream_once: {e}")
     
-    # 3. Yield buffered tools
+    # 3. Yield buffered tools (wrapped to match OpenAI tool_call format)
     for idx in sorted(tool_bufs.keys()):
-        yield "tool", tool_bufs[idx]
+        yield "tool", {"type": "function", "function": tool_bufs[idx]}
 
 
 async def _sarvam_stream(messages: list):
