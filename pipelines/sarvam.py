@@ -112,7 +112,7 @@ async def _sarvam_stream_once(messages: list):
                         yield "text", delta["content"]
                     
                     # B. Handle Tool Call Chunks
-                    if "tool_calls" in delta:
+                    if "tool_calls" in delta and delta["tool_calls"]:
                         for tc in delta["tool_calls"]:
                             idx = tc.get("index", 0)
                             if idx not in tool_bufs:
@@ -125,9 +125,11 @@ async def _sarvam_stream_once(messages: list):
                                 tool_bufs[idx]["arguments"] += fn["arguments"]
                 except json.JSONDecodeError:
                     continue
-    except Exception as e:
+    except aiohttp.ClientError as e:
         print(f"❌ [SARVAM ERROR] stream_once: {e}")
         reset_http()
+    except Exception as e:
+        print(f"❌ [SARVAM ERROR] stream_once: {e}")
     
     # 3. Yield buffered tools
     for idx in sorted(tool_bufs.keys()):
@@ -306,6 +308,10 @@ async def sarvam_handler(request):
 
         try:
             print(f"👤 User: {transcript}")
+            # Remove any orphaned user message left by a previous barge-in abort
+            # to avoid consecutive user turns that confuse the LLM
+            if history and history[-1]["role"] == "user":
+                history.pop()
             history.append({"role": "user", "content": transcript})
 
             # Keep history manageable (System prompt + last 20 turns)
