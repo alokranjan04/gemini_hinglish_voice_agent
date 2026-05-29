@@ -927,8 +927,10 @@ async def sarvam_handler(request):
                 if ev == "media" and sid and dg_ws:
                     try:
                         raw = base64.b64decode(data["media"]["payload"])
-                        if not dg_ws.closed:
+                        try:
                             await dg_ws.send(raw)
+                        except websockets.exceptions.ConnectionClosed:
+                            pass  # DG closed; recording still continues
                         recorder.write_caller(audioop.ulaw2lin(raw, 2))
                     except Exception as e:
                         print(f"⚠️ [DG SEND ERROR]: {e}")
