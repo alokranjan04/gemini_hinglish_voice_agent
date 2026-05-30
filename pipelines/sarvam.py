@@ -304,6 +304,111 @@ async def sarvam_handler(request):
             await speak("जी, बताइए।")
             return
 
+        # ── FAST PATH: illness/appointment → skip LLM, directly check slots ──
+        # Triggers when: no slot offered yet AND user mentions illness or needs appointment
+        _ILLNESS_WORDS = {
+            "बुखार", "fever", "खांसी", "khansi", "khaansi", "उल्टी", "ulti",
+            "पेट", "pet", "दर्द", "dard", "जुकाम", "सर्दी", "चोट", "चक्कर",
+            "दस्त", "तकलीफ", "बीमार", "beemar", "problem", "परेशान",
+        }
+        _APPT_WORDS = {
+            "appointment", "अपॉइंटमेंट", "booking", "book", "दिखाना", "dikhaana",
+            "दिखाना", "दिखाएं", "doctor", "डॉक्टर", "checkup",
+        }
+        if (not offered_slot.get("day") and len(history) <= 3 and
+                (any(w in tr_lower for w in _ILLNESS_WORDS) or
+                 any(w in tr_lower for w in _APPT_WORDS))):
+            print(f"⚡ [FAST PATH] Illness/appointment detected — skipping LLM for slot check")
+            pending_transcript = None
+            is_responding      = True
+            t_start = time.time()
+            try:
+                print(f"👤 User: {transcript}")
+                if history and history[-1]["role"] == "user":
+                    history.pop()
+                history.append({"role": "user", "content": transcript})
+                # Determine day from transcript
+                _fp_user_lower = tr_lower
+                if any(w in _fp_user_lower for w in ["परसों", "parson"]):
+                    _fp_day = "Day after tomorrow"
+                elif any(w in _fp_user_lower for w in ["कल", "kal", "tomorrow"]):
+                    _fp_day = "Tomorrow"
+                else:
+                    _fp_day = "Today"
+                # Play prelude and run slots concurrently
+                _prelude = "अरे, चिंता मत कीजिए। मैं doctor का schedule check करती हूँ।"
+                _slot_task = asyncio.create_task(
+                    asyncio.to_thread(FUNCTION_MAP["check_available_slots"], preferred_day=_fp_day)
+                )
+                await speak(_prelude)
+                slots_res = await _slot_task
+                offered_slot["day"] = slots_res.get("day", _fp_day)
+                if slots_res.get("available_slots"):
+                    offered_slot["time"] = slots_res["available_slots"][0]
+                hi_res = dict(slots_res)
+                if hi_res.get("available_slots"):
+                    hi_res["available_slots"] = [
+                        {"time_en": s, "time_hi": time_to_hindi(s)}
+                        for s in hi_res["available_slots"][:6]
+                    ]
+                history.append({"role": "assistant", "content": _prelude})
+                history.append({"role": "tool", "tool_call_id": "fast_slots",
+                                 "name": "check_available_slots",
+                                 "content": json.dumps(hi_res, ensure_ascii=False)})
+                # Build slot reply directly
+                if slots_res.get("available_slots"):
+                    day_label  = day_to_hindi(slots_res.get("day", _fp_day))
+                    offer_slots = [slots_res["available_slots"][0]]
+                    try:
+                        t0 = datetime.strptime(offer_slots[0], "%I:%M %p")
+                        for s in slots_res["available_slots"]:
+                            if s in offer_slots: continue
+                            t = datetime.strptime(s, "%I:%M %p")
+                            if 25 <= (t - t0).total_seconds() / 60 <= 90:
+                                offer_slots.append(s); break
+                        if len(offer_slots) < 3:
+                            for s in slots_res["available_slots"]:
+                                if s in offer_slots: continue
+                                if datetime.strptime(s, "%I:%M %p").hour >= 17:
+                                    offer_slots.append(s); break
+                    except Exception:
+                        pass
+                    if len(offer_slots) == 1:
+                        slot_reply = f"जी, {day_label} {time_to_hindi(offer_slots[0])} का slot है — ठीक रहेगा?"
+                    elif len(offer_slots) == 2:
+                        slot_reply = (f"जी, {day_label} {time_to_hindi(offer_slots[0])} "
+                                      f"या {time_to_hindi(offer_slots[1])} — कौन सा ठीक रहेगा?")
+                    else:
+                        slot_reply = (f"जी, {day_label} {time_to_hindi(offer_slots[0])}, "
+                                      f"{time_to_hindi(offer_slots[1])}, "
+                                      f"या {time_to_hindi(offer_slots[2])} — कौन सा ठीक रहेगा?")
+                    offered_slot["time"] = offer_slots[0]
+                else:
+                    tmr = await asyncio.to_thread(
+                        FUNCTION_MAP["check_available_slots"], preferred_day="Tomorrow"
+                    )
+                    slot_reply = (f"आज कोई slot नहीं है। "
+                                  f"कल {time_to_hindi(tmr['available_slots'][0])} ठीक रहेगा?"
+                                  if tmr.get("available_slots") else
+                                  "आज और कल कोई slot नहीं है। किसी और दिन के लिए बताएं?")
+                print(f"[FAST PATH SLOTS] {slot_reply!r}")
+                await speak(slot_reply)
+                history.append({"role": "assistant", "content": slot_reply})
+                print(f"⚡ [FAST PATH] E2E: {int((time.time()-t_start)*1000)} ms")
+            except Exception as e:
+                print(f"❌ [FAST PATH ERROR] {e} — falling through to LLM")
+                offered_slot = {"day": None, "time": None}
+                is_responding = False
+                # Fall through — next call will go to LLM
+                asyncio.create_task(handle_transcript(transcript))
+                return
+            finally:
+                is_responding = False
+                if pending_transcript:
+                    pt, pending_transcript = pending_transcript, None
+                    asyncio.create_task(handle_transcript(pt))
+            return
+
         pending_transcript = None
         is_responding      = True
         t_start = time.time()
@@ -482,8 +587,25 @@ async def sarvam_handler(request):
                         if not args.get("preferred_time") and offered_slot.get("time"):
                             args["preferred_time"] = offered_slot["time"]
                         if not args.get("reason"):         args["reason"]         = "General Checkup"
-                        args.update({"patient_age": "5", "parent_name": "Guardian",
-                                     "contact_number": caller_id})
+                        # Extract age from transcript/history — scan for digits+साल/year/month/महीना
+                        if not args.get("patient_age"):
+                            _age_text = " ".join(
+                                m["content"] for m in history[-10:]
+                                if m.get("role") == "user" and m.get("content")
+                            ) + " " + transcript
+                            _age_match = re.search(
+                                r"(\d+)\s*(?:साल|saal|sal|year|yr|महीन[ेा]|mahine?|month)",
+                                _age_text, re.IGNORECASE
+                            )
+                            if _age_match:
+                                _num = _age_match.group(1)
+                                _unit_raw = _age_match.group(0)[len(_num):].strip().lower()
+                                _unit = "महीने" if any(x in _unit_raw for x in ["महीन", "month", "mahin"]) else "साल"
+                                args["patient_age"] = f"{_num} {_unit}"
+                                print(f"[AGE EXTRACT] {args['patient_age']!r}")
+                            else:
+                                args["patient_age"] = "unknown"
+                        args.update({"parent_name": "Guardian", "contact_number": caller_id})
                         # ── Time: normalise Hindi → English then scan history ─
                         # LLM sometimes passes time in Hindi ('सुबह के साढ़े दस बजे')
                         # which breaks _normalize_time and skips the conflict check.

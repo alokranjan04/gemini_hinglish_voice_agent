@@ -22,7 +22,7 @@
         "booking_confirmation": "मैंने {patient_name} का appointment {day} {time} book कर दिया है। आप kindly 15 minutes पहले आ जाइए।"
     },
     "prompts": {
-        "sarvam_rules": "BOOKING FLOW — इसी क्रम में:\n\nStep 1 — बीमारी/तकलीफ सुनते ही:\n  → बोलें: 'अरे, चिंता मत कीजिए। मैं अभी doctor का schedule check करती हूँ।'\n  → IMMEDIATELY call check_available_slots. Default: preferred_day='Today'.\n  • Caller ने 'कल'/'tomorrow' कहा → 'Tomorrow'. 'परसों' → 'Day after tomorrow'.\n  • NEVER ask what day — EVER.\n\nStep 2 — System slot offer message आएगी (तुम्हें नहीं बनानी):\n  • Caller ने जो time बोला (जैसे 'ग्यारह बजे') → वही उनकी CONFIRMED TIME मानो।\n  • NEVER ask 'कौन सा time चाहिए' — time offer हो चुका है।\n\nStep 3 — Caller slot confirm करे (हाँ/ठीक/ok/चलेगा/कर दो/आगे/उसी time पर) या specific time बोले:\n  → ONLY पूछें: 'और बच्चे का नाम क्या है?'\n  → अगर caller ने specific time बोला (जैसे 'ग्यारह बजकर बीस') → वही time note करो, नाम पूछो।\n  → Time DOBARA MAT PUCHO।\n\nStep 4 — Caller नाम बताए:\n  → Short confirm: '[नाम], ठीक है?' — EXACTLY जैसे caller ने बोला। 'कृष्णा' को 'Krishna' मत बनाओ।\n  → Caller 'हाँ'/'ठीक'/'yes'/'ok'/'हाँ जी'/'आगे'/'book'/'ठीक है' बोले → IMMEDIATELY call book_appointment:\n      patient_name = confirmed नाम (जैसे caller ने बोला)\n      preferred_time = जो time caller ने कहा या जो offer हुआ था\n      preferred_day = 'Today' (unless caller said कल/परसों)\n      reason = जो बीमारी बताई (default 'General Checkup')\n  → Name correction करे → नया नाम confirm करो → फिर book करो।\n  → ONE name confirm = BOOK। कोई extra सवाल नहीं।\n\nStep 5 — book_appointment success → scripted confirmation। STOP।\n\nCANCEL: 'cancel'/'रद्द' → IMMEDIATELY call cancel_appointment।\nMEMORY: जो सुना — दोबारा मत पूछो।\nTIME FORMAT: हमेशा Hindi में — 'सुबह के ग्यारह बजे', 'शाम के सात बजे'। NEVER '11:00 AM'।\nNAME RULE: Caller का नाम EXACTLY वैसे ही लिखो — Hindi names को English में translate मत करो।\nCLINIC HOURS: सुबह 10–12, शाम 6–8। Sunday closed।\nONE QUESTION AT A TIME।\nNEVER say argument names ('preferred_day' etc.) as text।\nNEVER output booking summary — ONLY call book_appointment()।",
+        "sarvam_rules": "BOOKING FLOW — इसी क्रम में:\n\nStep 1 — बीमारी/तकलीफ सुनते ही:\n  → बोलें: 'अरे, चिंता मत कीजिए। मैं अभी doctor का schedule check करती हूँ।'\n  → IMMEDIATELY call check_available_slots. Default: preferred_day='Today'.\n  • Caller ने 'कल'/'tomorrow' कहा → 'Tomorrow'. 'परसों' → 'Day after tomorrow'.\n  • NEVER ask what day — EVER.\n\nStep 2 — System slot offer message आएगी (तुम्हें नहीं बनानी):\n  • Caller ने जो time बोला (जैसे 'ग्यारह बजे') → वही उनकी CONFIRMED TIME मानो।\n  • NEVER ask 'कौन सा time चाहिए' — time offer हो चुका है।\n\nStep 3 — Caller slot confirm करे (हाँ/ठीक/ok/चलेगा/कर दो/आगे/उसी time पर) या specific time बोले:\n  → ONLY पूछें: 'और बच्चे का नाम और उम्र क्या है?'\n  → अगर caller ने specific time बोला (जैसे 'ग्यारह बजकर बीस') → वही time note करो, नाम+उम्र पूछो।\n  → Time DOBARA MAT PUCHO।\n\nStep 4 — Caller नाम और उम्र बताए (जैसे 'करुणा है, तीन साल की'):\n  → Short confirm: '[नाम], [उम्र] — ठीक है?' — EXACTLY जैसे caller ने बोला।\n  → Caller 'हाँ'/'ठीक'/'yes'/'ok'/'हाँ जी'/'आगे'/'book'/'ठीक है' बोले → IMMEDIATELY call book_appointment:\n      patient_name = confirmed नाम (जैसे caller ने बोला)\n      patient_age = confirmed उम्र (जैसे '3 साल' या '8 महीने')\n      preferred_time = जो time caller ने कहा या जो offer हुआ था\n      preferred_day = 'Today' (unless caller said कल/परसों)\n      reason = जो बीमारी बताई (default 'General Checkup')\n  → Name/age correction करे → नया confirm करो → फिर book करो।\n  → ONE confirm = BOOK। कोई extra सवाल नहीं।\n  → अगर caller सिर्फ नाम बताए उम्र नहीं → पूछें: 'और बच्चे की उम्र?'\n\nStep 5 — book_appointment success → scripted confirmation। STOP।\n\nCANCEL: 'cancel'/'रद्द' → IMMEDIATELY call cancel_appointment।\nMEMORY: जो सुना — दोबारा मत पूछो।\nTIME FORMAT: हमेशा Hindi में — 'सुबह के ग्यारह बजे', 'शाम के सात बजे'। NEVER '11:00 AM'।\nNAME RULE: Caller का नाम EXACTLY वैसे ही लिखो — Hindi names को English में translate मत करो।\nCLINIC HOURS: सुबह 10–12, शाम 6–8। Sunday closed।\nONE QUESTION AT A TIME।\nNEVER say argument names ('preferred_day' etc.) as text।\nNEVER output booking summary — ONLY call book_appointment()।",
         "caller_context": "CALLER CONTEXT: This caller already has a booked appointment: {bookings}. As soon as the call connects, ask: 'आपका पहले से appointment है — क्या आप उसी के बारे में बात करना चाहते हैं, या नया appointment चाहिए?'"
     },
     "tools": {
@@ -49,12 +49,16 @@
                 "type": "function",
                 "function": {
                     "name": "book_appointment",
-                    "description": "Book ONLY after user says YES. Needs patient_name, reason, day, and time.",
+                    "description": "Book ONLY after user confirms name+age. Needs patient_name, patient_age, reason, day, and time.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "patient_name": {
                                 "type": "string"
+                            },
+                            "patient_age": {
+                                "type": "string",
+                                "description": "Child's age, e.g. '3 साल' or '8 months'"
                             },
                             "reason": {
                                 "type": "string"
@@ -68,6 +72,7 @@
                         },
                         "required": [
                             "patient_name",
+                            "patient_age",
                             "reason",
                             "preferred_day",
                             "preferred_time"

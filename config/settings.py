@@ -43,7 +43,11 @@ _DG_PARAMS = [
         "koyal:10,कोयल:10,goyal:8,गोयल:8,poonam:7,पूनम:7,ira:6,aira:6,ayra:6,"
         "krishna:6,कृष्णा:6,arjun:6,अर्जुन:6,rahul:5,राहुल:5,ananya:6,अनन्या:6,"
         "trishna:10,तृष्णा:10,trisna:10,trushna:10,aryan:6,आर्यन:6,riya:6,रिया:6,"
-        "mohan:5,मोहन:5,rohan:6,रोहन:6,sona:6,सोना:6,neha:5,नेहा:5,priya:5,प्रिया:5"
+        "mohan:5,मोहन:5,rohan:6,रोहन:6,sona:6,सोना:6,neha:5,नेहा:5,priya:5,प्रिया:5,"
+        "karuna:8,करुणा:8,kavya:6,काव्या:6,arnav:6,अर्णव:6,ishaan:6,ईशान:6,"
+        "aditya:5,आदित्य:5,shreya:6,श्रेया:6,vivaan:6,विवान:6,saanvi:6,सान्वी:6,"
+        "aarav:6,आराव:6,anvi:6,अन्वी:6,rudra:6,रुद्र:6,myra:6,माइरा:6,"
+        "kabir:5,कबीर:5,kiara:6,कियारा:6,yash:5,यश:5,tanvi:5,तन्वी:5"
     ))
 ]
 
