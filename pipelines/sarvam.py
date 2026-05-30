@@ -164,6 +164,7 @@ async def sarvam_handler(request):
     speak_queue        = asyncio.Queue()
     partial_hyp        = ""
     pending_transcript = None   # last utterance queued while bot was busy
+    offered_slot       = {"day": None, "time": None}  # day+time offered to caller; enforced at booking
     call_metrics       = None
     poll_task          = None
     tts_chars          = 0
@@ -288,7 +289,7 @@ async def sarvam_handler(request):
             pass
 
     async def handle_transcript(transcript: str):
-        nonlocal is_responding, speak_task, worker_task, pending_transcript, history, speak_queue
+        nonlocal is_responding, speak_task, worker_task, pending_transcript, history, speak_queue, offered_slot
 
         if is_responding:
             pending_transcript = transcript
@@ -470,7 +471,14 @@ async def sarvam_handler(request):
                     fn   = tc["function"]["name"]
                     args = json.loads(tc["function"]["arguments"])
                     if fn == "book_appointment":
-                        if not args.get("preferred_day"):  args["preferred_day"]  = "Today"
+                        # Always enforce offered_slot day — LLM often hallucinates the day name
+                        if offered_slot.get("day"):
+                            args["preferred_day"] = offered_slot["day"]
+                        elif not args.get("preferred_day"):
+                            args["preferred_day"] = "Today"
+                        # If LLM omits time, fall back to the offered slot's time
+                        if not args.get("preferred_time") and offered_slot.get("time"):
+                            args["preferred_time"] = offered_slot["time"]
                         if not args.get("reason"):         args["reason"]         = "General Checkup"
                         args.update({"patient_age": "5", "parent_name": "Guardian",
                                      "contact_number": caller_id})
@@ -575,6 +583,10 @@ async def sarvam_handler(request):
 
                     if fn == "check_available_slots" and isinstance(res, dict):
                         slots_res = res
+                        # Persist offered day+time so booking can't use a wrong day
+                        if res.get("available_slots"):
+                            offered_slot["day"]  = res.get("day", "Today")
+                            offered_slot["time"] = res["available_slots"][0]
                         hi_res = dict(res)
                         if hi_res.get("available_slots"):
                             hi_res["available_slots"] = [
