@@ -43,7 +43,7 @@ async def _sarvam_tts(text: str) -> str | None:
         "model": "bulbul:v2",
     }
     try:
-        timeout = aiohttp.ClientTimeout(total=5, connect=2)
+        timeout = aiohttp.ClientTimeout(total=12, connect=3)
         async with get_http().post(
             SARVAM_TTS_URL, json=payload,
             headers={"api-subscription-key": SARVAM_API_KEY},
