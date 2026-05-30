@@ -38,10 +38,12 @@ _DG_PARAMS = [
     ("filler_words", "true"),
     ("keywords", (
         "mujhe:4,bache:4,bachon:4,dikhaana:4,appointment:5,booking:5,book:5,"
-        "fever:4,bukhaar:4,bukhar:4,pait:4,dard:4,khansi:4,khaansi:4,ulti:4,bukhaar:4,"
-        "doctor:4,clinic:4,naam:4,umar:4,saal:4,kal:4,aaj:4,subah:4,shaam:4,ira:5,aira:5,ayra:5,"
-        "trishna:10,तृष्णा:10,trisna:10,trushna:10,t-r-i-s-h-n-a:10,trishan:10,t-r-i-s-h-a-n:10,"
-        "कृष्णा:5,krishna:5"
+        "fever:4,bukhaar:4,bukhar:4,pait:4,dard:4,khansi:4,khaansi:4,ulti:4,"
+        "doctor:4,clinic:4,naam:4,umar:4,saal:4,kal:4,aaj:4,subah:4,shaam:4,"
+        "koyal:10,कोयल:10,goyal:8,गोयल:8,poonam:7,पूनम:7,ira:6,aira:6,ayra:6,"
+        "krishna:6,कृष्णा:6,arjun:6,अर्जुन:6,rahul:5,राहुल:5,ananya:6,अनन्या:6,"
+        "trishna:10,तृष्णा:10,trisna:10,trushna:10,aryan:6,आर्यन:6,riya:6,रिया:6,"
+        "mohan:5,मोहन:5,rohan:6,रोहन:6,sona:6,सोना:6,neha:5,नेहा:5,priya:5,प्रिया:5"
     ))
 ]
 

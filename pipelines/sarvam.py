@@ -591,9 +591,11 @@ async def sarvam_handler(request):
                             offered_slot["time"] = res["available_slots"][0]
                         hi_res = dict(res)
                         if hi_res.get("available_slots"):
+                            # Limit to 6 representative slots in history to reduce LLM token load
+                            sample = hi_res["available_slots"][:6]
                             hi_res["available_slots"] = [
                                 {"time_en": s, "time_hi": time_to_hindi(s)}
-                                for s in hi_res["available_slots"]
+                                for s in sample
                             ]
                         llm_content = json.dumps(hi_res, ensure_ascii=False)
                     else:
@@ -674,20 +676,31 @@ async def sarvam_handler(request):
                                 f"क्या मैं {first_hi} का appointment book कर दूँ?"
                             )
                         else:
-                            # Offer up to 3 slots spaced ≥1 hour apart so user can pick
+                            # Offer up to 3 slots:
+                            # 1. best/first slot
+                            # 2. ~30-40 min later in same session
+                            # 3. Evening slot (≥17:00) if not already in offer
                             offer_slots = [best_slot]
-                            for s in slots_res["available_slots"]:
-                                if s == offer_slots[-1]:
-                                    continue
-                                try:
-                                    t      = datetime.strptime(s, "%I:%M %p")
-                                    t_prev = datetime.strptime(offer_slots[-1], "%I:%M %p")
-                                    if abs((t - t_prev).total_seconds()) >= 3600:
+                            try:
+                                t0 = datetime.strptime(offer_slots[0], "%I:%M %p")
+                                for s in slots_res["available_slots"]:
+                                    if s in offer_slots:
+                                        continue
+                                    t = datetime.strptime(s, "%I:%M %p")
+                                    diff_min = (t - t0).total_seconds() / 60
+                                    if 25 <= diff_min <= 90:  # ~30-90 min after first
                                         offer_slots.append(s)
-                                        if len(offer_slots) >= 3:
+                                        break
+                                if len(offer_slots) < 3:
+                                    for s in slots_res["available_slots"]:
+                                        if s in offer_slots:
+                                            continue
+                                        t = datetime.strptime(s, "%I:%M %p")
+                                        if t.hour >= 17:  # evening session
+                                            offer_slots.append(s)
                                             break
-                                except Exception:
-                                    pass
+                            except Exception:
+                                pass
                             if len(offer_slots) == 1:
                                 slot_reply = f"जी, {day_label} {time_to_hindi(offer_slots[0])} का slot है — ठीक रहेगा?"
                             elif len(offer_slots) == 2:
