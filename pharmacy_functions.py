@@ -596,11 +596,11 @@ def check_available_slots(preferred_day):
     is_today = (day == now_dt.strftime("%A"))
 
     if is_today:
-        now_min = now_dt.hour * 60 + now_dt.minute
+        now_min = now_dt.hour * 60 + now_dt.minute + 45  # require 45-min lead time
         available_slots = [
             s for s in available_slots
             if (datetime.strptime(s, "%I:%M %p").hour * 60 +
-                datetime.strptime(s, "%I:%M %p").minute) > now_min
+                datetime.strptime(s, "%I:%M %p").minute) >= now_min
         ]
 
     result = {
@@ -614,21 +614,6 @@ def check_available_slots(preferred_day):
         "timestamp": time.time(),
         "data": result
     }
-
-    if is_today and available_slots:
-        first_slot = available_slots[0]
-        slot_dt    = datetime.strptime(first_slot, "%I:%M %p")
-        mins_away  = (slot_dt.hour * 60 + slot_dt.minute) - now_min
-        if 0 < mins_away <= 30:
-            first_hi = _time_to_hindi(first_slot)
-            mins_hi  = _HI_MIN.get(mins_away, str(mins_away))
-            result["urgent_slot"]    = first_slot
-            result["urgent_minutes"] = mins_away
-            result["urgent_message"] = (
-                f"आज {first_hi} slot available है — "
-                f"सिर्फ {mins_hi} मिनट में। "
-                f"क्या आप इतनी जल्दी आ सकते हैं?"
-            )
 
     return result
 

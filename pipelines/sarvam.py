@@ -628,9 +628,7 @@ async def sarvam_handler(request):
 
                 # ── Slot check: build offer directly, no second LLM call ────
                 elif slots_res is not None:
-                    if slots_res.get("urgent_message"):
-                        slot_reply = slots_res["urgent_message"]
-                    elif slots_res.get("available_slots"):
+                    if slots_res.get("available_slots"):
                         best_slot    = slots_res["available_slots"][0]
                         booked_slots = slots_res.get("booked_slots", [])
 
@@ -782,9 +780,7 @@ async def sarvam_handler(request):
                         last_res = json.loads(history[-2]["content"]) if len(history) >= 2 else {}
                         last_fn = tool_calls[-1]["function"]["name"] if tool_calls else ""
                         if last_fn == "check_available_slots":
-                            if last_res.get("urgent_message"):
-                                fb = last_res["urgent_message"]
-                            elif last_res.get("available_slots"):
+                            if last_res.get("available_slots"):
                                 fb = f"क्या आज {time_to_hindi(last_res['available_slots'][0])} का समय ठीक रहेगा?"
                             else:
                                 fb = "आज कोई slot नहीं है। कल सुबह दस बजे का समय ठीक रहेगा?"
