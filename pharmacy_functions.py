@@ -440,15 +440,16 @@ def book_appointment(patient_name, patient_age, parent_name, contact_number, pre
 def _send_email(subject: str, body: str, sender_name: str = "Clinic Assistant", ics_content: str = None) -> dict:
     """Shared email sender. Attaches .ics calendar invite if ics_content is provided."""
     try:
-        gmail_user     = os.getenv("GMAIL_USER")
-        gmail_password = os.getenv("GMAIL_APP_PASSWORD")
-        doctor_email   = os.getenv("DOCTOR_EMAIL")
+        gmail_user     = os.getenv("GMAIL_USER", "").strip()
+        gmail_password = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
+        doctor_email   = os.getenv("DOCTOR_EMAIL", "").strip()
 
         if not all([gmail_user, gmail_password, doctor_email]):
             missing = [k for k, v in {"GMAIL_USER": gmail_user, "GMAIL_APP_PASSWORD": gmail_password, "DOCTOR_EMAIL": doctor_email}.items() if not v]
             print(f"EMAIL SKIP: Missing env vars: {missing}")
             return {"error": "Email credentials missing from environment"}
 
+        print(f"EMAIL ATTEMPT: '{subject}' → {doctor_email} (pwd_len={len(gmail_password)})")
         msg = MIMEMultipart()
         msg['From']    = f"{sender_name} <{gmail_user}>"
         msg['To']      = doctor_email
@@ -462,14 +463,14 @@ def _send_email(subject: str, body: str, sender_name: str = "Clinic Assistant", 
             part.add_header('Content-Disposition', 'attachment; filename="invite.ics"')
             msg.attach(part)
 
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as server:
             server.starttls()
             server.login(gmail_user, gmail_password)
             server.send_message(msg)
         print(f"EMAIL SENT: '{subject}' → {doctor_email}")
         return {"success": True}
     except Exception as e:
-        print(f"EMAIL ERROR: {e}")
+        print(f"EMAIL ERROR: {type(e).__name__}: {e}")
         return {"error": str(e)}
 
 def send_confirmation_email_with_ics(appt):

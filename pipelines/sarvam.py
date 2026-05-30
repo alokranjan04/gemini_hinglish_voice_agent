@@ -1031,11 +1031,20 @@ async def sarvam_handler(request):
             if transcript_lines:
                 summary = (f"Caller: {caller_id} | Duration: {duration}s "
                            f"| Turns: {len(transcript_lines)}")
-                asyncio.create_task(asyncio.to_thread(
-                    send_call_summary_email, summary, "\n".join(transcript_lines)
-                ))
-        except Exception:
-            pass
+                print(f"📧 [EMAIL] Sending call summary ({len(transcript_lines)} turns)...")
+                async def _send_and_log():
+                    result = await asyncio.to_thread(
+                        send_call_summary_email, summary, "\n".join(transcript_lines)
+                    )
+                    if result.get("success"):
+                        print("📧 [EMAIL] Call summary sent ✅")
+                    else:
+                        print(f"📧 [EMAIL] Failed: {result.get('error')}")
+                asyncio.create_task(_send_and_log())
+            else:
+                print("📧 [EMAIL] Skipped — no transcript (call too short)")
+        except Exception as e:
+            print(f"📧 [EMAIL] Exception in summary task: {e}")
         if dg_ws:
             await dg_ws.close()
         if not ws.closed:
