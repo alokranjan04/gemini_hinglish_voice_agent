@@ -74,7 +74,7 @@ async def _sarvam_stream_once(messages: list):
         "temperature": params.get("temperature", 0.1),
         "stream": True,
     }
-    timeout   = aiohttp.ClientTimeout(total=8, sock_read=8)
+    timeout   = aiohttp.ClientTimeout(connect=5, sock_read=25)  # no total — stream runs until done
     tool_bufs: dict = {}
     try:
         async with get_http().post(
@@ -125,6 +125,8 @@ async def _sarvam_stream_once(messages: list):
                                 tool_bufs[idx]["arguments"] += fn["arguments"]
                 except json.JSONDecodeError:
                     continue
+    except asyncio.TimeoutError:
+        print("❌ [SARVAM ERROR] stream_once: timeout (model too slow — increase sock_read)")
     except aiohttp.ClientError as e:
         print(f"❌ [SARVAM ERROR] stream_once: {e}")
         reset_http()
@@ -659,17 +661,42 @@ async def sarvam_handler(request):
                                 best_slot = s
                                 break
 
-                        first_hi  = time_to_hindi(best_slot)
+                        # Update offered_slot to reflect matched/best slot
+                        offered_slot["time"] = best_slot
+
                         day_label = day_to_hindi(slots_res.get("day", "Today"))
 
                         if preferred_was_booked and booked_time_hi:
+                            first_hi   = time_to_hindi(best_slot)
                             slot_reply = (
                                 f"{booked_time_hi} की appointment पहले से book है। "
                                 f"{first_hi} में doctor free हैं। "
                                 f"क्या मैं {first_hi} का appointment book कर दूँ?"
                             )
                         else:
-                            slot_reply = f"जी, {day_label} {first_hi} का slot है — ठीक रहेगा?"
+                            # Offer up to 3 slots spaced ≥1 hour apart so user can pick
+                            offer_slots = [best_slot]
+                            for s in slots_res["available_slots"]:
+                                if s == offer_slots[-1]:
+                                    continue
+                                try:
+                                    t      = datetime.strptime(s, "%I:%M %p")
+                                    t_prev = datetime.strptime(offer_slots[-1], "%I:%M %p")
+                                    if abs((t - t_prev).total_seconds()) >= 3600:
+                                        offer_slots.append(s)
+                                        if len(offer_slots) >= 3:
+                                            break
+                                except Exception:
+                                    pass
+                            if len(offer_slots) == 1:
+                                slot_reply = f"जी, {day_label} {time_to_hindi(offer_slots[0])} का slot है — ठीक रहेगा?"
+                            elif len(offer_slots) == 2:
+                                slot_reply = (f"जी, {day_label} {time_to_hindi(offer_slots[0])} "
+                                              f"या {time_to_hindi(offer_slots[1])} — कौन सा ठीक रहेगा?")
+                            else:
+                                slot_reply = (f"जी, {day_label} {time_to_hindi(offer_slots[0])}, "
+                                              f"{time_to_hindi(offer_slots[1])}, "
+                                              f"या {time_to_hindi(offer_slots[2])} — कौन सा ठीक रहेगा?")
                     else:
                         tmr = await asyncio.to_thread(
                             FUNCTION_MAP["check_available_slots"], preferred_day="Tomorrow"
