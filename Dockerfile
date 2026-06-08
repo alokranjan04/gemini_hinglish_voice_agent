@@ -31,7 +31,7 @@ COPY routes/     ./routes/
 COPY metrics/    ./metrics/
 
 # Runtime directories
-RUN mkdir -p recordings metrics && chown -R 1000:1000 /app
+RUN mkdir -p recordings metrics knowledge_base && chown -R 1000:1000 /app
 
 # Run as non-root
 RUN useradd -m -u 1000 priya
